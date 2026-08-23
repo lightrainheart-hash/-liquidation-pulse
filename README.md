@@ -1,4 +1,4 @@
-# LiqPulse v0.5.0
+# LiqPulse v0.5.1
 
 iPhone Safari/PWA向けの分析専用リアルタイム先物モニターです。注文機能はありません。
 
@@ -48,3 +48,10 @@ Cloudflareで既存Worker `liqpulse-relay` → Settings → Builds → Connect �
 - ETH / SOLはBTCと同じLiquidation Radar / 清算クラスター表示を継続
 
 Long/Short統計はBinance USDⓈ-Mの公開市場統計であり、Hyperliquid全体の建玉比率ではありません。
+
+
+## v0.5.1
+
+- Long/Short Positioning: BinanceをPrimary、Bybit Linearを全口座比率のFallbackとして追加。
+- BinanceがCloudflare経由で拒否された場合でもBybit `GET /v5/market/account-ratio` の5分統計を利用。
+- データソースを画面下に明示し、Top Traderが取得できない場合は欠損を明示。

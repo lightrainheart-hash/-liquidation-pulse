@@ -1,10 +1,11 @@
-// LiqPulse v0.5.0 — Cloudflare Worker relay
+// LiqPulse v0.5.1 — Cloudflare Worker relay
 // Public market data only. No API keys, cookies, or user data are forwarded.
 
 const ALLOWED_HEATMAP_SYMBOLS = new Set(['BTC', 'ETH', 'SOL']);
 const ALLOWED_POSITIONING_SYMBOLS = new Set(['BTC', 'ETH', 'SOL', 'XRP', 'ZEC']);
 const HEATMAP_UPSTREAM = 'https://trade.hyperperps.app/api/public/heatmap/';
 const BINANCE_FUTURES_DATA = 'https://fapi.binance.com/futures/data/';
+const BYBIT_V5 = 'https://api.bybit.com/v5/market/account-ratio';
 const ALLOWED_ORIGINS = new Set([
   'https://lightrainheart-hash.github.io',
 ]);
@@ -39,11 +40,7 @@ function latestPoint(data) {
   return data && typeof data === 'object' ? data : null;
 }
 
-async function handlePositioning(symbol, headers) {
-  if (!ALLOWED_POSITIONING_SYMBOLS.has(symbol)) {
-    return Response.json({ error: 'unsupported_symbol' }, { status: 400, headers });
-  }
-  const pair = `${symbol}USDT`;
+async function fetchBinancePositioning(pair) {
   const endpoints = {
     global: 'globalLongShortAccountRatio',
     topAccounts: 'topLongShortAccountRatio',
@@ -62,20 +59,70 @@ async function handlePositioning(symbol, headers) {
       results[key] = null;
     }
   }));
-  if (!results.global && !results.topAccounts && !results.topPositions) {
-    return Response.json({ error: 'positioning_upstream_failed', symbol, source: 'Binance USDⓈ-M', errors }, { status: 502, headers });
+  return { results, errors };
+}
+
+async function fetchBybitGlobal(pair) {
+  const params = new URLSearchParams({ category: 'linear', symbol: pair, period: '5min', limit: '1' });
+  const data = await fetchJson(`${BYBIT_V5}?${params}`, { cacheTtl: 20, cacheEverything: true });
+  if (Number(data?.retCode) !== 0) throw new Error(`Bybit retCode ${data?.retCode}: ${data?.retMsg || 'unknown error'}`);
+  const item = Array.isArray(data?.result?.list) ? data.result.list[0] : null;
+  if (!item) throw new Error('Bybit returned no ratio rows');
+  const long = Number(item.buyRatio);
+  const short = Number(item.sellRatio);
+  const timestamp = Number(item.timestamp) || Date.now();
+  if (!Number.isFinite(long) || !Number.isFinite(short) || long < 0 || short < 0) throw new Error('Bybit ratio fields invalid');
+  return {
+    longAccount: long,
+    shortAccount: short,
+    longShortRatio: short > 0 ? long / short : null,
+    timestamp,
+  };
+}
+
+async function handlePositioning(symbol, headers) {
+  if (!ALLOWED_POSITIONING_SYMBOLS.has(symbol)) {
+    return Response.json({ error: 'unsupported_symbol' }, { status: 400, headers });
   }
+  const pair = `${symbol}USDT`;
+  const { results, errors } = await fetchBinancePositioning(pair);
+  let globalSource = results.global ? 'Binance USDⓈ-M' : null;
+
+  // Binance may reject some Cloudflare egress IPs. Fall back to Bybit for the all-account ratio.
+  if (!results.global) {
+    try {
+      results.global = await fetchBybitGlobal(pair);
+      globalSource = 'Bybit Linear';
+    } catch (error) {
+      errors.push(`bybitGlobal:${String(error?.message || error)}`);
+    }
+  }
+
+  if (!results.global && !results.topAccounts && !results.topPositions) {
+    return Response.json({
+      error: 'positioning_upstream_failed',
+      symbol,
+      sourcesTried: ['Binance USDⓈ-M', 'Bybit Linear'],
+      errors,
+    }, { status: 502, headers });
+  }
+
   const timestamps = [results.global, results.topAccounts, results.topPositions]
     .map(x => Number(x?.timestamp)).filter(Number.isFinite);
+
   return Response.json({
     symbol,
     pair,
-    source: 'Binance USDⓈ-M',
     period: '5m',
     timestamp: timestamps.length ? Math.max(...timestamps) : Date.now(),
     global: results.global,
     topAccounts: results.topAccounts,
     topPositions: results.topPositions,
+    sources: {
+      global: globalSource,
+      topAccounts: results.topAccounts ? 'Binance USDⓈ-M' : null,
+      topPositions: results.topPositions ? 'Binance USDⓈ-M' : null,
+    },
     errors,
   }, { headers: { ...headers, 'Cache-Control': 'public, max-age=20' } });
 }
@@ -88,7 +135,7 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === '/health') {
-      return Response.json({ ok: true, service: 'liqpulse-relay', version: '0.5.0' }, { headers });
+      return Response.json({ ok: true, service: 'liqpulse-relay', version: '0.5.1' }, { headers });
     }
 
     const heatmapMatch = url.pathname.match(/^\/heatmap\/([A-Za-z0-9_-]+)$/);

@@ -475,7 +475,7 @@ async function fetchPositioning(){
     const topAccounts=normalizeRatioPoint(raw?.topAccounts);
     const topPositions=normalizeRatioPoint(raw?.topPositions);
     if(!global&&!topAccounts&&!topPositions) throw new Error(raw?.error||'No ratio data');
-    state.positioning={global,topAccounts,topPositions,source:raw?.source||'Binance USDⓈ-M',timestamp:Number(raw?.timestamp)||Date.now(),errors:raw?.errors||[]};
+    state.positioning={global,topAccounts,topPositions,sources:raw?.sources||{},timestamp:Number(raw?.timestamp)||Date.now(),errors:raw?.errors||[]};
     setText('statusPositioning','正常'); renderPositioning(); renderPressure();
   }catch(err){
     console.warn('positioning',err); state.positioning=null; setText('statusPositioning','取得失敗'); renderPositioning(); renderPressure();
@@ -497,7 +497,20 @@ function renderPositioning(){
     else { const ms=Math.max(0,Date.now()-p.timestamp); age.textContent=ms<120000?'5分データ':`${Math.round(ms/60000)}分前`; }
   }
   const note=$('positioningNote');
-  if(note){ note.textContent=p?'Binance USDⓈ-M公開統計。Hyperliquid建玉比率ではありません。Global=全口座、Top Trader=上位トレーダー統計。':'公開Long/Short統計を取得できるとここに表示します。'; }
+  if(note){
+    if(!p){
+      note.textContent='公開Long/Short統計を取得できるとここに表示します。';
+    }else{
+      const gs=p.sources?.global||'不明';
+      const ta=p.sources?.topAccounts;
+      const tp=p.sources?.topPositions;
+      let text=`全口座: ${gs}`;
+      if(ta||tp) text+=` / Top Trader: ${ta||tp}`;
+      else text+=' / Top Trader: 取得不可';
+      text+='。Hyperliquid建玉比率ではありません。';
+      note.textContent=text;
+    }
+  }
 }
 
 function renderPressure(){
