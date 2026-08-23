@@ -35,7 +35,7 @@ const ASSETS = [
 ];
 
 const state = {
-  asset: ASSETS[0],
+  asset: ASSETS.find(x=>x.symbol==='SP500') || ASSETS[0],
   ws:null,
   wsBackoff:1000,
   tradeEvents:[],
@@ -91,6 +91,8 @@ function updateAssetSpecificPanels(){
   if(posCard) posCard.classList.toggle('hidden',!state.asset.positioning);
   const finviz=$('finvizMapCard');
   if(finviz) finviz.classList.toggle('hidden',state.asset.symbol!=='SP500');
+  const command=$('sp500CommandCard');
+  if(command) command.classList.toggle('hidden',state.asset.symbol!=='SP500');
 }
 
 async function switchAsset(symbol){
@@ -98,7 +100,7 @@ async function switchAsset(symbol){
   state.switching=true;
   state.asset=ASSETS.find(x=>x.symbol===symbol)||ASSETS[0];
   state.tradeEvents=[]; state.heatmap=null; state.positioning=null; state.orderbook=null; state.sp500Map=null; state.latestPrice=null;
-  renderAssetTabs(); updateAssetSpecificPanels(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderQuickView(); renderRelaySettings();
+  renderAssetTabs(); updateAssetSpecificPanels(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderQuickView(); renderSp500Command(); renderRelaySettings();
   connectWs(true);
   await Promise.allSettled([fetchMeta(), fetchHeatmap(), fetchPositioning(), fetchOrderBook(), fetchSp500Map()]);
   state.switching=false;
@@ -302,6 +304,136 @@ function sp500ChangeClass(v){
   if(v<=-2) return 'down5'; if(v<=-1) return 'down4'; if(v<=-0.5) return 'down3'; if(v<=-0.15) return 'down2'; if(v<-0.02) return 'down1';
   return 'flat';
 }
+function sp500SnapshotKey(){ return 'liqpulse_sp500_breadth_snapshots'; }
+function loadSp500Snapshots(){
+  try{
+    const raw=JSON.parse(localStorage.getItem(sp500SnapshotKey())||'[]');
+    return Array.isArray(raw)?raw:[];
+  }catch{return [];}
+}
+function saveSp500Snapshot(data){
+  if(!data?.rows?.length) return;
+  const a=sp500Analytics(data,false);
+  if(!a) return;
+  const now=Date.now();
+  let arr=loadSp500Snapshots().filter(x=>now-Number(x.ts||0)<=6*60*60*1000);
+  const last=arr[arr.length-1];
+  if(!last || now-Number(last.ts||0)>=60000){
+    arr.push({ts:now,advPct:a.advPct,equalWeighted:a.equalWeighted,capWeighted:a.capWeighted,health:a.healthScore});
+    if(arr.length>360) arr=arr.slice(-360);
+    try{localStorage.setItem(sp500SnapshotKey(),JSON.stringify(arr));}catch{}
+  }
+}
+function sp500Snapshot15m(){
+  const arr=loadSp500Snapshots();
+  if(!arr.length) return null;
+  const target=Date.now()-15*60*1000;
+  let best=null;
+  for(const x of arr){ if(Number(x.ts)<=target) best=x; else break; }
+  return best;
+}
+function sp500Analytics(data=state.sp500Map,withHistory=true){
+  const rows=data?.rows;
+  if(!Array.isArray(rows)||!rows.length) return null;
+  const valid=rows.filter(r=>Number.isFinite(Number(r.change)));
+  if(!valid.length) return null;
+  const adv=valid.filter(r=>Number(r.change)>0.02).length;
+  const dec=valid.filter(r=>Number(r.change)<-0.02).length;
+  const flat=valid.length-adv-dec;
+  const advPct=adv/valid.length;
+  const equalWeighted=valid.reduce((a,r)=>a+Number(r.change),0)/valid.length;
+  const capWeighted=Number(data.summary?.capWeightedChange);
+
+  const groups=new Map();
+  for(const r of valid){
+    const sec=r.sector||'Other';
+    if(!groups.has(sec)) groups.set(sec,[]);
+    groups.get(sec).push(r);
+  }
+  const sectorStats=[];
+  for(const [sector,list] of groups){
+    const cap=list.reduce((a,r)=>a+(Number(r.marketCap)>0?Number(r.marketCap):0),0);
+    const weighted=cap?list.reduce((a,r)=>a+(Number(r.marketCap)>0?Number(r.marketCap):0)*Number(r.change),0)/cap:list.reduce((a,r)=>a+Number(r.change),0)/list.length;
+    sectorStats.push({sector,change:weighted});
+  }
+  const positiveSectors=sectorStats.filter(x=>x.change>0.05).length;
+  const negativeSectors=sectorStats.filter(x=>x.change<-0.05).length;
+  const sectorPct=sectorStats.length?positiveSectors/sectorStats.length:0.5;
+
+  const byTicker=new Map(valid.map(r=>[String(r.ticker).toUpperCase(),r]));
+  const megaGroups=[['AAPL'],['MSFT'],['NVDA'],['AMZN'],['META'],['GOOG','GOOGL'],['TSLA']];
+  const megaMoves=[];
+  for(const names of megaGroups){
+    const vals=names.map(n=>byTicker.get(n)).filter(Boolean).map(r=>Number(r.change)).filter(Number.isFinite);
+    if(vals.length) megaMoves.push(vals.reduce((a,b)=>a+b,0)/vals.length);
+  }
+  const mega7=megaMoves.length?megaMoves.reduce((a,b)=>a+b,0)/megaMoves.length:NaN;
+  const capVsEqual=Number.isFinite(capWeighted)?capWeighted-equalWeighted:NaN;
+
+  let score=50;
+  score += (advPct-.5)*56;
+  score += clamp(equalWeighted/2,-1,1)*12;
+  if(Number.isFinite(capWeighted)) score += clamp(capWeighted/2,-1,1)*10;
+  score += (sectorPct-.5)*18;
+  if(Number.isFinite(mega7)) score += clamp(mega7/2,-1,1)*4;
+  const healthScore=Math.round(clamp(score,0,100));
+
+  let breadthRegime='均衡';
+  if(healthScore>=72) breadthRegime='広範な上昇';
+  else if(healthScore>=60) breadthRegime='上昇優勢';
+  else if(healthScore<=28) breadthRegime='広範な下落';
+  else if(healthScore<=40) breadthRegime='下落優勢';
+
+  let concentration='均衡型';
+  if(Number.isFinite(capVsEqual)){
+    if(capVsEqual>=0.35) concentration='大型株主導';
+    else if(capVsEqual<=-0.35) concentration='中小型まで強い';
+  }
+
+  let change15m=null;
+  if(withHistory){
+    const old=sp500Snapshot15m();
+    if(old){
+      change15m={advPct:advPct-Number(old.advPct),health:healthScore-Number(old.health),capWeighted:Number.isFinite(capWeighted)?capWeighted-Number(old.capWeighted):NaN};
+    }
+  }
+  return {adv,dec,flat,total:valid.length,advPct,equalWeighted,capWeighted,capVsEqual,mega7,megaCount:megaMoves.length,sectorStats,positiveSectors,negativeSectors,sectorCount:sectorStats.length,sectorPct,healthScore,breadthRegime,concentration,change15m};
+}
+function renderSp500Command(){
+  const card=$('sp500CommandCard');
+  if(!card) return;
+  if(state.asset.symbol!=='SP500') return;
+  const a=sp500Analytics();
+  if(!a){
+    setText('sp500CommandAction','判定待ち'); setText('sp500CommandConfidence','信頼度 —'); setText('sp500HealthScore','—'); setText('sp500HealthLabel','取得中');
+    setText('sp500AdvPct','—'); setText('sp500AdvMeta','—'); setText('sp500EqualWeighted','—'); setText('sp500WeightDivergence','—'); setText('sp500Mega7','—'); setText('sp500Mega7Meta','—'); setText('sp500PositiveSectors','—'); setText('sp500SectorMeta','—');
+    setText('sp500CommandAdvice','S&P 500構成銘柄データを取得後に総合判断します。');
+    return;
+  }
+  const d=decisionMetrics();
+  const delta=d.up-d.down;
+  let action='見送り', tone='neutral';
+  if(d.confidence>=58 && Math.abs(delta)>=16){ action=delta>0?'LONG候補':'SHORT候補'; tone=delta>0?'up':'down'; }
+  if(d.confidence>=74 && Math.abs(delta)>=28){ action=delta>0?'LONG優先':'SHORT優先'; }
+  setText('sp500CommandAction',action); setText('sp500CommandConfidence',`信頼度 ${d.confidence}%`);
+  const actionEl=$('sp500CommandAction'); if(actionEl) actionEl.className=tone==='up'?'green':tone==='down'?'red':'';
+  const badge=$('sp500CommandBadge'); if(badge){ badge.textContent=a.breadthRegime; badge.className=`signal-badge ${a.healthScore>=60?'up':a.healthScore<=40?'down':'neutral'}`; }
+  setText('sp500HealthScore',`${a.healthScore}/100`); setText('sp500HealthLabel',a.concentration);
+  setText('sp500AdvPct',`${(a.advPct*100).toFixed(1)}%`); setText('sp500AdvMeta',`${a.adv}上昇 / ${a.dec}下落 / ${a.flat}横ばい`);
+  setText('sp500EqualWeighted',`${a.equalWeighted>=0?'+':''}${a.equalWeighted.toFixed(2)}%`); setText('sp500WeightDivergence',Number.isFinite(a.capVsEqual)?`時価加重との差 ${a.capVsEqual>=0?'+':''}${a.capVsEqual.toFixed(2)}pt`:'—');
+  setText('sp500Mega7',Number.isFinite(a.mega7)?`${a.mega7>=0?'+':''}${a.mega7.toFixed(2)}%`:'—'); setText('sp500Mega7Meta',`${a.megaCount}/7社取得`);
+  setText('sp500PositiveSectors',`${a.positiveSectors}/${a.sectorCount}`); setText('sp500SectorMeta',a.change15m?`健全度15分 ${a.change15m.health>=0?'+':''}${a.change15m.health}`:'15分履歴を蓄積中');
+
+  let advice=`${a.breadthRegime}。${a.concentration}です。`;
+  if(a.healthScore>=65 && a.advPct>=0.60) advice+=' 上昇参加率が高く、指数上昇の中身も比較的強い状態です。';
+  else if(a.healthScore<=35 && a.advPct<=0.40) advice+=' 下落参加率が高く、幅広い売りが出ています。';
+  else if(Number.isFinite(a.capVsEqual) && a.capVsEqual>0.35) advice+=' 指数は大型株に支えられているため、見た目ほど全面高ではありません。';
+  else if(Number.isFinite(a.capVsEqual) && a.capVsEqual<-0.35) advice+=' 大型株以外にも買いが広がっており、市場内部は指数以上に強めです。';
+  if(action==='見送り') advice+=' AI総合条件はまだエントリー基準未満です。';
+  else advice+=` AI総合では${action}です。`;
+  setText('sp500CommandAdvice',advice);
+}
+
 function renderSp500Map(){
   const grid=$('sp500MapGrid'); if(!grid) return;
   grid.textContent='';
@@ -328,6 +460,7 @@ function renderSp500Map(){
     list.forEach((r,i)=>{ const t=document.createElement('div'); const rank=Number(r.rank)||999; t.className=`map-tile ${sp500ChangeClass(Number(r.change))} ${rank<=10?'rank-xl':rank<=35?'rank-lg':'rank-md'}`; t.title=`${r.ticker} ${r.description||''} ${Number(r.change)>=0?'+':''}${Number(r.change).toFixed(2)}%`; const b=document.createElement('b'); b.textContent=r.ticker; const sm=document.createElement('small'); const ch=Number(r.change); sm.textContent=Number.isFinite(ch)?`${ch>=0?'+':''}${ch.toFixed(2)}%`:'—'; t.append(b,sm); tiles.appendChild(t); });
     sec.appendChild(tiles); grid.appendChild(sec);
   }
+  renderDecisionEngine();
 }
 async function fetchSp500Map(){
   if(state.asset.symbol!=='SP500'){ state.sp500Map=null; renderSp500Map(); return; }
@@ -337,7 +470,7 @@ async function fetchSp500Map(){
   try{
     const raw=await fetchJsonWithTimeout(`${relayBase}/sp500-map`,CONFIG.relayTimeoutMs+5000);
     if(raw?.error || !Array.isArray(raw?.rows)) throw new Error(raw?.error||'invalid map response');
-    state.sp500Map=raw; renderSp500Map();
+    state.sp500Map=raw; saveSp500Snapshot(raw); renderSp500Map();
   }catch(err){ console.warn('sp500-map',err); state.sp500Map=null; renderSp500Map(); }
 }
 
@@ -729,6 +862,17 @@ function decisionMetrics(){
     if(sum>0) up += ((sFuel/sum)-.5)*10;
     weight+=5; used.push('最寄り清算');
   }
+  if(state.asset.symbol==='SP500'){
+    const sp=sp500Analytics();
+    if(sp){
+      up += (sp.advPct-.5)*34;
+      up += clamp(sp.equalWeighted/2,-1,1)*8;
+      if(Number.isFinite(sp.capWeighted)) up += clamp(sp.capWeighted/2,-1,1)*7;
+      up += (sp.sectorPct-.5)*10;
+      if(Number.isFinite(sp.mega7)) up += clamp(sp.mega7/2,-1,1)*4;
+      weight+=35; used.push('S&P500内部');
+    }
+  }
   up=clamp(up,0,100); const down=100-up;
   const spread=Math.abs(up-50)*2;
   const completeness=clamp(weight/100,0,1);
@@ -751,6 +895,10 @@ function decisionMetrics(){
     reasons.push(`OI 15分 ${mm.oiChange>=0?'+':''}${(mm.oiChange*100).toFixed(2)}%${Number.isFinite(mm.priceChange)?` / 価格 ${mm.priceChange>=0?'+':''}${(mm.priceChange*100).toFixed(2)}%`:''}`);
   }
   if(ez){ reasons.push(`L2板 ${ez.bidPct>=.5?'買い':'売り'}側 ${(Math.max(ez.bidPct,ez.askPct)*100).toFixed(0)}%`); }
+  if(state.asset.symbol==='SP500'){
+    const sp=sp500Analytics();
+    if(sp) reasons.unshift(`S&P500参加率 ${(sp.advPct*100).toFixed(0)}% / 健全度 ${sp.healthScore}`);
+  }
   return {up,down,confidence,label,tone,reasons:reasons.slice(0,4),used,mm};
 }
 
@@ -788,6 +936,9 @@ function quickDecision(){
 function renderQuickView(){
   const q=quickDecision();
   const {d,radar}=q;
+  const isSp500=state.asset.symbol==='SP500';
+  const liqTitle=document.querySelector('.quick-liq-title');
+  if(liqTitle) liqTitle.textContent=isSp500?'直近の推定反応ライン':'直近の清算ライン';
   setText('quickDominance',q.dominance);
   setText('quickDominanceMeta',`LONG ${Math.round(d.up)} / SHORT ${Math.round(d.down)}`);
   setText('quickAction',q.action);
@@ -841,6 +992,7 @@ function renderDecisionEngine(){
   setText('fundingState',fs);
   setText('positionSource',state.positioning?.sources?.global||'—');
   renderQuickView();
+  if(state.asset.symbol==='SP500') renderSp500Command();
 }
 
 function renderPressure(){
@@ -918,7 +1070,7 @@ window.addEventListener('offline',()=>setStatus('error','OFFLINE'));
 document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'){ connectWs(); fetchMeta(); fetchHeatmap(); fetchPositioning(); fetchOrderBook(); fetchSp500Map(); } });
 
 (async function init(){
-  renderAssetTabs(); updateAssetSpecificPanels(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderQuickView(); renderRelaySettings();
+  renderAssetTabs(); updateAssetSpecificPanels(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderQuickView(); renderSp500Command(); renderRelaySettings();
   connectWs(); setupTimers();
   await Promise.allSettled([fetchMeta(),fetchHeatmap(),fetchPositioning(),fetchOrderBook(),fetchSp500Map()]);
   if('serviceWorker' in navigator){
@@ -929,4 +1081,4 @@ document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==
   }
 })();
 
-// LiqPulse v0.9.1
+// LiqPulse v1.0.0

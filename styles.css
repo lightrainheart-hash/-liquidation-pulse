@@ -71,7 +71,7 @@
 @media(max-width:560px){.quick-primary,.quick-liq-grid{grid-template-columns:1fr 1fr}.quick-side>b,.quick-action>b{font-size:19px}.quick-liq b{font-size:16px}}
 
 
-/* v0.9.2 S&P 500 independent market map */
+/* v1.0.0 S&P 500 independent market map */
 .sp500-map-card{overflow:hidden}
 .sp500-map-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:14px}
 .sp500-map-summary>div{background:#0b1320;border:1px solid #1e3046;border-radius:14px;padding:10px 11px;min-width:0}
@@ -94,3 +94,19 @@
 @media(max-width:600px){.sp500-map-summary{grid-template-columns:1fr 1fr 1fr}.sp500-map-summary b{font-size:12px}.map-sector-tiles{grid-template-columns:repeat(5,minmax(0,1fr))}.map-tile.rank-xl{grid-column:span 3}.map-tile.rank-lg{grid-column:span 2}}
 
 .external-map-btn{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:0 14px;border:1px solid var(--line);border-radius:999px;color:var(--text);text-decoration:none;font-weight:700;font-size:13px;background:rgba(255,255,255,.03)}
+
+/* v1.0.0 S&P 500 focus */
+.sp500-command-card{border-color:#315077;box-shadow:0 18px 38px rgba(0,0,0,.24)}
+.sp500-command-title{font-size:15px;color:#f2f7ff}
+.sp500-command-main{display:grid;grid-template-columns:1.35fr .65fr;gap:10px;margin-top:14px}
+.sp500-command-verdict,.sp500-health{background:#0a1422;border:1px solid #263a55;border-radius:16px;padding:14px;min-width:0}
+.sp500-command-verdict span,.sp500-health span{display:block;color:#8192aa;font-size:10px;font-weight:800}
+.sp500-command-verdict b{display:block;margin-top:7px;font-size:25px;letter-spacing:-.03em}
+.sp500-health b{display:block;margin-top:7px;font-size:22px}
+.sp500-command-verdict small,.sp500-health small{display:block;margin-top:5px;color:#7b8ca3;font-size:9px}
+.sp500-command-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px}
+.sp500-command-grid>div{background:#0b1320;border:1px solid #203249;border-radius:14px;padding:10px;min-width:0}
+.sp500-command-grid span{display:block;color:#8191a7;font-size:9px;font-weight:750}
+.sp500-command-grid b{display:block;margin-top:6px;font-size:15px;white-space:nowrap}
+.sp500-command-grid small{display:block;margin-top:4px;color:#73849b;font-size:8px;line-height:1.35}
+@media(max-width:600px){.sp500-command-main{grid-template-columns:1.2fr .8fr}.sp500-command-grid{grid-template-columns:1fr 1fr}.sp500-command-verdict b{font-size:22px}.sp500-health b{font-size:19px}}

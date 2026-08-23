@@ -10,13 +10,13 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="apple-touch-icon" href="./icon-180.png" />
   <link rel="stylesheet" href="./styles.css" />
-  <title>LiqPulse v0.9.2</title>
+  <title>LiqPulse v1.0.0</title>
 </head>
 <body>
   <main class="app-shell">
     <header class="topbar">
       <div>
-        <div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v0.9.2</span></div>
+        <div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v1.0.0</span></div>
         <h1>LiqPulse</h1>
       </div>
       <div id="connBadge" class="status offline"><span></span><b>接続中</b></div>
@@ -35,6 +35,39 @@
         </div>
       </div>
       <button id="refreshBtn" class="icon-btn" aria-label="更新">↻</button>
+    </section>
+
+    <section id="sp500CommandCard" class="card sp500-command-card hidden">
+      <div class="section-head">
+        <div>
+          <div class="card-title sp500-command-title">S&amp;P 500 Command Center</div>
+          <div class="subtitle">指数の中身・大型株・セクター参加率をAI判断に統合</div>
+        </div>
+        <span id="sp500CommandBadge" class="signal-badge neutral">分析中</span>
+      </div>
+
+      <div class="sp500-command-main">
+        <div class="sp500-command-verdict">
+          <span>AI総合判断</span>
+          <b id="sp500CommandAction">判定待ち</b>
+          <small id="sp500CommandConfidence">信頼度 —</small>
+        </div>
+        <div class="sp500-health">
+          <span>市場健全度</span>
+          <b id="sp500HealthScore">—</b>
+          <small id="sp500HealthLabel">取得中</small>
+        </div>
+      </div>
+
+      <div class="sp500-command-grid">
+        <div><span>上昇参加率</span><b id="sp500AdvPct">—</b><small id="sp500AdvMeta">—</small></div>
+        <div><span>等ウェイト</span><b id="sp500EqualWeighted">—</b><small id="sp500WeightDivergence">—</small></div>
+        <div><span>大型7社</span><b id="sp500Mega7">—</b><small id="sp500Mega7Meta">—</small></div>
+        <div><span>上昇セクター</span><b id="sp500PositiveSectors">—</b><small id="sp500SectorMeta">—</small></div>
+      </div>
+
+      <div id="sp500CommandAdvice" class="quick-advice">S&amp;P 500構成銘柄データを取得後に総合判断します。</div>
+      <div class="hint">大型株だけで指数が動いている場合と、市場全体が同方向に参加している場合を区別します。これは売買判断の補助指標で、将来の値動きを保証するものではありません。</div>
     </section>
 
     <section class="card quick-view-card">
