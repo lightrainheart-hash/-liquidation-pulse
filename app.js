@@ -1,11 +1,13 @@
 'use strict';
 
+const DEFAULT_RELAY = 'https://liqpulse-relay.lightrain-heart.workers.dev';
+
 const CONFIG = {
   infoUrl: 'https://api.hyperliquid.xyz/info',
   wsUrl: 'wss://api.hyperliquid.xyz/ws',
   heatmapDirect: 'https://trade.hyperperps.app/api/public/heatmap/',
   // Optional first-party relay. Set once in-app after deploying relay-worker.js to Cloudflare Workers.
-  relayBase: localStorage.getItem('liqpulse_relay_base') || '',
+  relayBase: localStorage.getItem('liqpulse_relay_base') || DEFAULT_RELAY,
   infoPollMs: 15000,
   heatmapPollMs: 60000,
   relayTimeoutMs: 10000,
@@ -383,8 +385,8 @@ async function testRelay(){
   }finally{ if(btn) btn.disabled=false; }
 }
 function clearRelay(){
-  CONFIG.relayBase=''; localStorage.removeItem('liqpulse_relay_base'); renderRelaySettings();
-  const msg=$('relayTestResult'); if(msg) msg.textContent='Relay設定を削除しました。';
+  CONFIG.relayBase=DEFAULT_RELAY; localStorage.removeItem('liqpulse_relay_base'); renderRelaySettings();
+  const msg=$('relayTestResult'); if(msg) msg.textContent='標準Relay URLに戻しました。';
 }
 
 $('refreshBtn').addEventListener('click',()=>Promise.allSettled([fetchMeta(),fetchHeatmap()]));
