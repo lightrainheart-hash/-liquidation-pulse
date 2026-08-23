@@ -23,3 +23,22 @@
 .secondary-btn{border:1px solid #315d96;background:#17355f;color:#f5f8ff}
 .ghost-btn{border:1px solid #27364c;background:transparent;color:#9eabc0}
 .secondary-btn:disabled{opacity:.55}
+
+/* v0.4 radar + centered liquidation map */
+.head-actions{display:flex;align-items:center;gap:8px}
+.decision-card{overflow:hidden}
+.radar-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+.radar-box{background:#0b1320;border:1px solid #1e3044;border-radius:14px;padding:12px;min-width:0}
+.radar-box span{display:block;color:#8090a7;font-size:10px;font-weight:700}
+.radar-box b{display:block;font-size:17px;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.radar-box small{display:block;color:#758399;font-size:9px;margin-top:4px}
+.radar-box.up b{color:var(--green)}
+.radar-box.down b{color:var(--red)}
+.radar-reason{margin-top:10px;padding:10px 12px;border:1px solid #1e3044;background:#0b1320;border-radius:12px;color:#91a0b4;font-size:10px;line-height:1.5}
+.liq-row{position:relative}
+.liq-label{display:inline-block;margin-top:3px;padding:2px 5px;border-radius:999px;font-size:8px;font-weight:800;letter-spacing:.01em;border:1px solid #2c3a4c;color:#9eb0c7;background:#111a27}
+.liq-label.trigger{color:#ffcf73;border-color:#5a4622;background:#1b160c}
+.liq-label.major-short{color:#66e9bc;border-color:#205e4b;background:#0d211b}
+.liq-label.major-long{color:#ff8ca0;border-color:#683043;background:#291018}
+.current-line{position:sticky;top:0;z-index:2;background:rgba(13,20,31,.88);backdrop-filter:blur(8px);padding:5px 0}
+@media(max-width:560px){.radar-grid{grid-template-columns:1fr 1fr}.radar-box b{font-size:15px}}

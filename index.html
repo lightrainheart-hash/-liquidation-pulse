@@ -10,13 +10,13 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="apple-touch-icon" href="./icon-180.png" />
   <link rel="stylesheet" href="./styles.css" />
-  <title>LiqPulse v0.3.2</title>
+  <title>LiqPulse v0.4.0</title>
 </head>
 <body>
   <main class="app-shell">
     <header class="topbar">
       <div>
-        <div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v0.3.2</span></div>
+        <div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v0.4.0</span></div>
         <h1>LiqPulse</h1>
       </div>
       <div id="connBadge" class="status offline"><span></span><b>接続中</b></div>
@@ -37,13 +37,47 @@
       <button id="refreshBtn" class="icon-btn" aria-label="更新">↻</button>
     </section>
 
+
+    <section class="card decision-card">
+      <div class="section-head">
+        <div>
+          <div class="card-title">Liquidation Radar</div>
+          <div class="subtitle">最寄りトリガー・最大クラスター・15分変化</div>
+        </div>
+        <span id="radarBiasBadge" class="pill">分析待ち</span>
+      </div>
+      <div class="radar-grid">
+        <div class="radar-box up">
+          <span>↑ 最寄りショート清算</span>
+          <b id="nearestShort">—</b>
+          <small id="nearestShortMeta">—</small>
+        </div>
+        <div class="radar-box down">
+          <span>↓ 最寄りロング清算</span>
+          <b id="nearestLong">—</b>
+          <small id="nearestLongMeta">—</small>
+        </div>
+        <div class="radar-box">
+          <span>上側清算総額 ±5%</span>
+          <b id="short5Total" class="green">—</b>
+          <small id="shortMomentum">15分変化 —</small>
+        </div>
+        <div class="radar-box">
+          <span>下側清算総額 ±5%</span>
+          <b id="long5Total" class="red">—</b>
+          <small id="longMomentum">15分変化 —</small>
+        </div>
+      </div>
+      <div id="radarReason" class="radar-reason">清算データ取得後に表示します。</div>
+    </section>
+
     <section class="card heatmap-card">
       <div class="section-head">
         <div>
           <div class="card-title">清算クラスター</div>
           <div class="subtitle">実ポジション由来 / BTC・ETH・SOL</div>
         </div>
-        <span id="heatmapAge" class="pill">—</span>
+        <div class="head-actions"><select id="clusterDepth" class="select-pill" aria-label="表示件数"><option value="5">5段</option><option value="8" selected>8段</option><option value="12">12段</option></select><span id="heatmapAge" class="pill">—</span></div>
       </div>
       <div id="clusterSummary" class="cluster-summary hidden"></div>
       <div id="heatmapNotice" class="notice hidden"></div>
@@ -126,9 +160,9 @@
     </section>
 
     <footer>
-      分析専用・注文機能なし。清算クラスターは価格到達を保証しません。Account L/Sは未実装です。BTC/ETH/SOL清算データはHyperPerps公開APIをRelay経由で取得できます。
+      分析専用・注文機能なし。清算クラスターは価格到達を保証しません。Account L/Sは信頼できる公開集計ソースがないため未実装です。BTC/ETH/SOL清算データはHyperPerps公開APIをRelay経由で取得できます。
     </footer>
   </main>
-  <script src="./app.js?v=0.3.2" defer></script>
+  <script src="./app.js?v=0.4.0" defer></script>
 </body>
 </html>

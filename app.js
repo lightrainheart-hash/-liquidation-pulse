@@ -14,6 +14,8 @@ const CONFIG = {
   maxTradeWindowMs: 60 * 60 * 1000,
   wsStaleMs: 15000,
   liqBiasRangePct: 0.10,
+  radarRangePct: 0.05,
+  snapshotRetentionMs: 6 * 60 * 60 * 1000,
 };
 
 const ASSETS = [
@@ -30,6 +32,7 @@ const state = {
   wsBackoff:1000,
   tradeEvents:[],
   flowWindowMs:300000,
+  clusterDepth:8,
   ctxByCoin:new Map(),
   latestPrice:null,
   heatmap:null,
@@ -75,7 +78,7 @@ async function switchAsset(symbol){
   state.switching=true;
   state.asset=ASSETS.find(x=>x.symbol===symbol)||ASSETS[0];
   state.tradeEvents=[]; state.heatmap=null; state.latestPrice=null;
-  renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRelaySettings();
+  renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderRelaySettings();
   connectWs(true);
   await Promise.allSettled([fetchMeta(), fetchHeatmap()]);
   state.switching=false;
@@ -127,7 +130,7 @@ function connectWs(force=false){
     if(msg.channel==='trades' && Array.isArray(msg.data)) ingestTrades(msg.data);
     if(msg.channel==='allMids' && msg.data?.mids){
       const p=Number(msg.data.mids[state.asset.symbol]);
-      if(Number.isFinite(p)){ state.latestPrice=p; setText('price',priceFmt(p)); renderHeatmap(); renderLiqBias(); renderPressure(); }
+      if(Number.isFinite(p)){ state.latestPrice=p; setText('price',priceFmt(p)); renderHeatmap(); renderLiqBias(); renderPressure(); renderRadar(); }
     }
   };
   ws.onerror=()=>setStatus('error','再接続');
@@ -192,6 +195,7 @@ async function fetchHeatmap(){
       const normalized=normalizeHeatmap(raw);
       if(!normalized.levels.length) throw new Error('No recognized liquidation levels');
       state.heatmap=normalized;
+      saveHeatmapSnapshot();
       setText('statusHeatmap','正常'); setText('statusHeatmapRoute',route.name);
       renderHeatmap(); renderLiqBias(); renderPressure(); return;
     }catch(err){ lastErr=err; console.warn('heatmap route failed',route.name,err); }
@@ -293,18 +297,90 @@ function normalizeHeatmap(raw){
   }
   return {levels:[...merged.values()],timestamp:ts,raw,sourceSpot:Number.isFinite(sourceSpot)?sourceSpot:null};
 }
+function snapshotKey(symbol){ return `liqpulse_heatmap_snapshots_${symbol}`; }
+function loadSnapshots(symbol){
+  try{
+    const raw=JSON.parse(localStorage.getItem(snapshotKey(symbol))||'[]');
+    const cutoff=Date.now()-CONFIG.snapshotRetentionMs;
+    return Array.isArray(raw)?raw.filter(x=>Number(x?.ts)>=cutoff):[];
+  }catch{return []}
+}
+function aggregateRange(levels,spot,rangePct=CONFIG.radarRangePct){
+  let short=0,long=0;
+  for(const x of levels||[]){
+    const d=(x.price/spot)-1;
+    if(x.side==='short' && d>0 && d<=rangePct) short+=x.notional;
+    if(x.side==='long' && d<0 && -d<=rangePct) long+=x.notional;
+  }
+  return {short,long};
+}
+function saveHeatmapSnapshot(){
+  const spot=state.latestPrice || state.ctxByCoin.get(state.asset.symbol)?.markPx;
+  if(!Number.isFinite(spot)||!state.heatmap?.levels?.length) return;
+  const agg=aggregateRange(state.heatmap.levels,spot);
+  const list=loadSnapshots(state.asset.symbol);
+  const last=list[list.length-1];
+  if(last && Date.now()-last.ts<45000) return;
+  list.push({ts:Date.now(),short:agg.short,long:agg.long,spot});
+  try{localStorage.setItem(snapshotKey(state.asset.symbol),JSON.stringify(list.slice(-360)));}catch{}
+}
+function momentum15m(side,current){
+  const list=loadSnapshots(state.asset.symbol);
+  if(!list.length||!Number.isFinite(current)) return null;
+  const target=Date.now()-15*60*1000;
+  let prev=null,best=Infinity;
+  for(const x of list){ const d=Math.abs(x.ts-target); if(d<best){best=d;prev=x;} }
+  if(!prev || best>10*60*1000) return null;
+  const base=Number(prev[side]);
+  if(!Number.isFinite(base)||base<=0) return null;
+  return (current-base)/base;
+}
+function radarMetrics(){
+  const spot=state.latestPrice || state.ctxByCoin.get(state.asset.symbol)?.markPx;
+  const lv=state.heatmap?.levels||[];
+  if(!Number.isFinite(spot)||!lv.length) return null;
+  const shorts=lv.filter(x=>x.side==='short'&&x.price>spot).sort((a,b)=>a.price-b.price);
+  const longs=lv.filter(x=>x.side==='long'&&x.price<spot).sort((a,b)=>b.price-a.price);
+  const totals=aggregateRange(lv,spot);
+  return {spot,nearestShort:shorts[0]||null,nearestLong:longs[0]||null,totals,
+    shortMomentum:momentum15m('short',totals.short),longMomentum:momentum15m('long',totals.long)};
+}
+function fmtMomentum(v){
+  if(!Number.isFinite(v)) return '15分変化 —';
+  const sign=v>0?'+':''; return `15分変化 ${sign}${(v*100).toFixed(1)}%`;
+}
+function renderRadar(){
+  const r=radarMetrics();
+  if(!r){
+    ['nearestShort','nearestLong','short5Total','long5Total'].forEach(id=>setText(id,'—'));
+    setText('nearestShortMeta','—');setText('nearestLongMeta','—');setText('shortMomentum','15分変化 —');setText('longMomentum','15分変化 —');setText('radarBiasBadge','分析待ち');setText('radarReason','清算データ取得後に表示します。');return;
+  }
+  const ns=r.nearestShort,nl=r.nearestLong;
+  setText('nearestShort',ns?priceFmt(ns.price):'—');
+  setText('nearestShortMeta',ns?`${(distPct(ns.price,r.spot)*100).toFixed(2)}% · ${money(ns.notional)}${ns.walletCount?` · ${ns.walletCount} wallets`:''}`:'—');
+  setText('nearestLong',nl?priceFmt(nl.price):'—');
+  setText('nearestLongMeta',nl?`${Math.abs(distPct(nl.price,r.spot)*100).toFixed(2)}% · ${money(nl.notional)}${nl.walletCount?` · ${nl.walletCount} wallets`:''}`:'—');
+  setText('short5Total',money(r.totals.short)); setText('long5Total',money(r.totals.long));
+  setText('shortMomentum',fmtMomentum(r.shortMomentum)); setText('longMomentum',fmtMomentum(r.longMomentum));
+  const total=r.totals.short+r.totals.long; const shortPct=total?r.totals.short/total:.5;
+  let badge='均衡', reason='±5%の清算想定額はおおむね均衡しています。';
+  if(shortPct>=.62){badge='上側優勢';reason=`上側ショート清算が±5%内の${(shortPct*100).toFixed(0)}%を占めています。上抜け時のスクイーズ燃料が相対的に大きい状態です。`;}
+  else if(shortPct<=.38){badge='下側優勢';reason=`下側ロング清算が±5%内の${((1-shortPct)*100).toFixed(0)}%を占めています。下抜け時のカスケード燃料が相対的に大きい状態です。`;}
+  setText('radarBiasBadge',badge); setText('radarReason',reason);
+}
+
 function selectVisibleLevels(){
   const spot=state.latestPrice || state.ctxByCoin.get(state.asset.symbol)?.markPx;
   const lv=state.heatmap?.levels||[];
   if(!Number.isFinite(spot)) return {spot,above:[],below:[]};
-  const below=lv.filter(x=>x.side==='long'&&x.price<spot).sort((a,b)=>b.price-a.price).slice(0,8);
-  const above=lv.filter(x=>x.side==='short'&&x.price>spot).sort((a,b)=>a.price-b.price).slice(0,8);
+  const below=lv.filter(x=>x.side==='long'&&x.price<spot).sort((a,b)=>b.price-a.price).slice(0,state.clusterDepth);
+  const above=lv.filter(x=>x.side==='short'&&x.price>spot).sort((a,b)=>a.price-b.price).slice(0,state.clusterDepth);
   return {spot,above,below};
 }
 
 function renderHeatmap(){
   const host=$('heatmap'), note=$('heatmapNotice'), summary=$('clusterSummary');
-  host.textContent=''; note.classList.add('hidden'); summary.classList.add('hidden'); summary.textContent='';
+  host.textContent=''; note.classList.add('hidden'); summary.classList.add('hidden'); summary.textContent=''; renderRadar();
   if(!state.asset.heatmap){
     note.textContent=`${state.asset.symbol}の実ポジション清算マップは現在未対応。価格・OI・Funding・Takerフローはリアルタイムです。`;
     note.classList.remove('hidden'); setText('heatmapAge','未対応'); return;
@@ -318,19 +394,25 @@ function renderHeatmap(){
     note.textContent='清算データ形式は取得できましたが、現在値の上下に有効なクラスターを認識できません。'; note.classList.remove('hidden'); return;
   }
   const max=Math.max(1,...below.map(x=>x.notional),...above.map(x=>x.notional));
+  const topShort=[...above].sort((a,b)=>b.notional-a.notional)[0];
+  const topLong=[...below].sort((a,b)=>b.notional-a.notional)[0];
+  const nearestShort=above[0]||null, nearestLong=below[0]||null;
   const addRows=(arr,side)=>arr.forEach(x=>{
     const d=distPct(x.price,spot);
     const row=document.createElement('div'); row.className='liq-row';
     const wallet=x.walletCount?` · ${x.walletCount} wallets`:'';
-    row.innerHTML=`<div class="liq-price"><b>${priceFmt(x.price)}</b><small>${Number.isFinite(d)?(d*100).toFixed(2)+'%':''}${wallet}</small></div><div class="liq-track"><div class="liq-fill ${side}" style="width:${clamp(x.notional/max*100,2,100)}%"></div></div><div class="liq-value ${side==='short'?'green':'red'}">${money(x.notional)}</div>`;
+    let label=''; let labelClass='';
+    if(x===nearestShort||x===nearestLong){label='一次トリガー';labelClass='trigger';}
+    if(x===topShort){label=label?`${label} / 最大`:'上値の壁';labelClass='major-short';}
+    if(x===topLong){label=label?`${label} / 最大`:'主要クラスター';labelClass='major-long';}
+    const badge=label?`<em class="liq-label ${labelClass}">${label}</em>`:'';
+    row.innerHTML=`<div class="liq-price"><b>${priceFmt(x.price)}</b><small>${Number.isFinite(d)?(d*100).toFixed(2)+'%':''}${wallet}</small>${badge}</div><div class="liq-track"><div class="liq-fill ${side}" style="width:${clamp(x.notional/max*100,2,100)}%"></div></div><div class="liq-value ${side==='short'?'green':'red'}">${money(x.notional)}</div>`;
     host.appendChild(row);
   });
-  addRows(above,'short');
+  addRows([...above].reverse(),'short');
   const cur=document.createElement('div'); cur.className='current-line'; cur.textContent=`現在 ${priceFmt(spot)}`; host.appendChild(cur);
   addRows(below,'long');
 
-  const topShort=[...above].sort((a,b)=>b.notional-a.notional)[0];
-  const topLong=[...below].sort((a,b)=>b.notional-a.notional)[0];
   if(topShort||topLong){
     summary.innerHTML=`<div><span>上側最大</span><b class="green">${topShort?`${priceFmt(topShort.price)} · ${money(topShort.notional)}`:'—'}</b></div><div><span>下側最大</span><b class="red">${topLong?`${priceFmt(topLong.price)} · ${money(topLong.notional)}`:'—'}</b></div>`;
     summary.classList.remove('hidden');
@@ -338,6 +420,7 @@ function renderHeatmap(){
 
   const age=Math.max(0,Date.now()-state.heatmap.timestamp);
   setText('heatmapAge',age<120000?'LIVE':`${Math.round(age/60000)}分前`);
+  renderRadar();
 }
 
 function liquidationBias(){
@@ -421,12 +504,13 @@ $('refreshBtn').addEventListener('click',()=>Promise.allSettled([fetchMeta(),fet
 $('testRelayBtn')?.addEventListener('click',testRelay);
 $('clearRelayBtn')?.addEventListener('click',clearRelay);
 $('flowWindow').addEventListener('change',(e)=>{ state.flowWindowMs=Number(e.target.value)||300000; renderFlow(); renderPressure(); });
+$('clusterDepth')?.addEventListener('change',(e)=>{ state.clusterDepth=Number(e.target.value)||8; renderHeatmap(); });
 window.addEventListener('online',()=>{connectWs(true); fetchMeta(); fetchHeatmap();});
 window.addEventListener('offline',()=>setStatus('error','OFFLINE'));
 document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'){ connectWs(); fetchMeta(); fetchHeatmap(); } });
 
 (async function init(){
-  renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRelaySettings();
+  renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderRelaySettings();
   connectWs(); setupTimers();
   await Promise.allSettled([fetchMeta(),fetchHeatmap()]);
   if('serviceWorker' in navigator){
