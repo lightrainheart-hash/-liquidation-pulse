@@ -42,3 +42,6 @@
 .liq-label.major-long{color:#ff8ca0;border-color:#683043;background:#291018}
 .current-line{position:sticky;top:0;z-index:2;background:rgba(13,20,31,.88);backdrop-filter:blur(8px);padding:5px 0}
 @media(max-width:560px){.radar-grid{grid-template-columns:1fr 1fr}.radar-box b{font-size:15px}}
+
+/* v0.5 positioning */
+.positioning-card{overflow:hidden}.ls-list{display:grid;grid-template-columns:1fr;gap:10px;margin-top:14px}.ls-row{background:#0b1320;border:1px solid #1e3044;border-radius:14px;padding:12px}.ls-head{display:flex;justify-content:space-between;gap:10px;align-items:center;color:#8d9bb0;font-size:10px;font-weight:700}.ls-head b{color:#cbd6e5;font-size:10px}.ratio-row.small{margin:9px 0 6px;font-size:15px}.positioning-card .ratio{height:7px}.positioning-card .ratio i:first-child{background:linear-gradient(90deg,#137957,#25d39a)}.positioning-card .ratio i:last-child{background:linear-gradient(90deg,#9f2943,#f0526a)}

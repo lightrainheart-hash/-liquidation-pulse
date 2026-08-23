@@ -10,6 +10,7 @@ const CONFIG = {
   relayBase: localStorage.getItem('liqpulse_relay_base') || DEFAULT_RELAY,
   infoPollMs: 15000,
   heatmapPollMs: 60000,
+  positioningPollMs: 60000,
   relayTimeoutMs: 10000,
   maxTradeWindowMs: 60 * 60 * 1000,
   wsStaleMs: 15000,
@@ -19,11 +20,11 @@ const CONFIG = {
 };
 
 const ASSETS = [
-  { symbol:'BTC', name:'Bitcoin', heatmap:true },
-  { symbol:'ETH', name:'Ethereum', heatmap:true },
-  { symbol:'SOL', name:'Solana', heatmap:true },
-  { symbol:'XRP', name:'XRP', heatmap:false },
-  { symbol:'ZEC', name:'Zcash', heatmap:false },
+  { symbol:'BTC', name:'Bitcoin', heatmap:true, positioning:true },
+  { symbol:'ETH', name:'Ethereum', heatmap:true, positioning:true },
+  { symbol:'SOL', name:'Solana', heatmap:true, positioning:true },
+  { symbol:'XRP', name:'XRP', heatmap:false, positioning:true },
+  { symbol:'ZEC', name:'Zcash', heatmap:false, positioning:true },
 ];
 
 const state = {
@@ -36,6 +37,7 @@ const state = {
   ctxByCoin:new Map(),
   latestPrice:null,
   heatmap:null,
+  positioning:null,
   timers:[],
   switching:false,
   lastWsAt:0,
@@ -77,10 +79,10 @@ async function switchAsset(symbol){
   if(state.switching || symbol===state.asset.symbol) return;
   state.switching=true;
   state.asset=ASSETS.find(x=>x.symbol===symbol)||ASSETS[0];
-  state.tradeEvents=[]; state.heatmap=null; state.latestPrice=null;
-  renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderRelaySettings();
+  state.tradeEvents=[]; state.heatmap=null; state.positioning=null; state.latestPrice=null;
+  renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderRelaySettings();
   connectWs(true);
-  await Promise.allSettled([fetchMeta(), fetchHeatmap()]);
+  await Promise.allSettled([fetchMeta(), fetchHeatmap(), fetchPositioning()]);
   state.switching=false;
 }
 
@@ -445,6 +447,59 @@ function renderLiqBias(){
   $('shortLiqBar').style.width=(b.shortPct*100)+'%'; $('longLiqBar').style.width=(b.longPct*100)+'%';
 }
 
+
+function normalizeRatioPoint(value){
+  if(!value || typeof value!=='object') return null;
+  let long=Number(value.longAccount ?? value.long_account ?? value.longPosition ?? value.long_position);
+  let short=Number(value.shortAccount ?? value.short_account ?? value.shortPosition ?? value.short_position);
+  const ratio=Number(value.longShortRatio ?? value.long_short_ratio ?? value.ratio);
+  if(!Number.isFinite(long) || !Number.isFinite(short)){
+    if(Number.isFinite(ratio) && ratio>=0){ long=ratio/(1+ratio); short=1/(1+ratio); }
+  }
+  if(!Number.isFinite(long)||!Number.isFinite(short)) return null;
+  if(long>1 || short>1){ const total=long+short; if(total>0){long/=total; short/=total;} }
+  const total=long+short;
+  if(total<=0) return null;
+  long/=total; short/=total;
+  return {long,short,ratio:short>0?long/short:Infinity,timestamp:Number(value.timestamp)||Date.now()};
+}
+
+async function fetchPositioning(){
+  if(!state.asset.positioning){ state.positioning=null; setText('statusPositioning','未対応'); renderPositioning(); return; }
+  const relayBase=(CONFIG.relayBase||'').replace(/\/$/,'');
+  if(!relayBase){ state.positioning=null; setText('statusPositioning','Relay未設定'); renderPositioning(); return; }
+  setText('statusPositioning','取得中');
+  try{
+    const raw=await fetchJsonWithTimeout(`${relayBase}/positioning/${encodeURIComponent(state.asset.symbol)}`,CONFIG.relayTimeoutMs);
+    const global=normalizeRatioPoint(raw?.global);
+    const topAccounts=normalizeRatioPoint(raw?.topAccounts);
+    const topPositions=normalizeRatioPoint(raw?.topPositions);
+    if(!global&&!topAccounts&&!topPositions) throw new Error(raw?.error||'No ratio data');
+    state.positioning={global,topAccounts,topPositions,source:raw?.source||'Binance USDⓈ-M',timestamp:Number(raw?.timestamp)||Date.now(),errors:raw?.errors||[]};
+    setText('statusPositioning','正常'); renderPositioning(); renderPressure();
+  }catch(err){
+    console.warn('positioning',err); state.positioning=null; setText('statusPositioning','取得失敗'); renderPositioning(); renderPressure();
+  }
+}
+function setRatioView(prefix,point){
+  const l=$(prefix+'Long'), s=$(prefix+'Short'), lb=$(prefix+'LongBar'), sb=$(prefix+'ShortBar'), r=$(prefix+'Ratio');
+  if(!point){ if(l)l.textContent='—'; if(s)s.textContent='—'; if(r)r.textContent='L/S —'; if(lb)lb.style.width='50%'; if(sb)sb.style.width='50%'; return; }
+  if(l)l.textContent=(point.long*100).toFixed(1)+'%'; if(s)s.textContent=(point.short*100).toFixed(1)+'%';
+  if(r)r.textContent=`L/S ${Number.isFinite(point.ratio)?point.ratio.toFixed(2):'∞'}`;
+  if(lb)lb.style.width=(point.long*100)+'%'; if(sb)sb.style.width=(point.short*100)+'%';
+}
+function renderPositioning(){
+  const p=state.positioning;
+  setRatioView('globalLs',p?.global||null); setRatioView('topAccountLs',p?.topAccounts||null); setRatioView('topPositionLs',p?.topPositions||null);
+  const age=$('positioningAge');
+  if(age){
+    if(!p){ age.textContent='取得待ち'; }
+    else { const ms=Math.max(0,Date.now()-p.timestamp); age.textContent=ms<120000?'5分データ':`${Math.round(ms/60000)}分前`; }
+  }
+  const note=$('positioningNote');
+  if(note){ note.textContent=p?'Binance USDⓈ-M公開統計。Hyperliquid建玉比率ではありません。Global=全口座、Top Trader=上位トレーダー統計。':'公開Long/Short統計を取得できるとここに表示します。'; }
+}
+
 function renderPressure(){
   const f=flowTotals(); const flow=f.total?f.buy/f.total:0.5;
   const funding=state.ctxByCoin.get(state.asset.symbol)?.funding || 0;
@@ -452,6 +507,12 @@ function renderPressure(){
   const b=liquidationBias();
   if(b){ const skew=b.shortPct-b.longPct; up+=skew*32; down-=skew*32; }
   const fAdj=clamp(funding*12000,-10,10); up-=fAdj; down+=fAdj;
+  const pos=state.positioning?.topPositions || state.positioning?.global;
+  if(pos){
+    const crowd=clamp((pos.long-pos.short)*12,-7,7);
+    // Crowded longs slightly increase downside squeeze risk; crowded shorts do the reverse.
+    up-=crowd; down+=crowd;
+  }
   setText('upScore',Math.round(clamp(up,0,100))+'/100'); setText('downScore',Math.round(clamp(down,0,100))+'/100');
 }
 
@@ -459,6 +520,7 @@ function setupTimers(){
   state.timers.forEach(clearInterval); state.timers=[];
   state.timers.push(setInterval(fetchMeta,CONFIG.infoPollMs));
   state.timers.push(setInterval(fetchHeatmap,CONFIG.heatmapPollMs));
+  state.timers.push(setInterval(fetchPositioning,CONFIG.positioningPollMs));
   state.timers.push(setInterval(()=>{
     state.tradeEvents=state.tradeEvents.filter(x=>x.ts>=Date.now()-CONFIG.maxTradeWindowMs);
     renderFlow(); renderPressure();
@@ -500,19 +562,19 @@ function clearRelay(){
   const msg=$('relayTestResult'); if(msg) msg.textContent='標準Relay URLに戻しました。';
 }
 
-$('refreshBtn').addEventListener('click',()=>Promise.allSettled([fetchMeta(),fetchHeatmap()]));
+$('refreshBtn').addEventListener('click',()=>Promise.allSettled([fetchMeta(),fetchHeatmap(),fetchPositioning()]));
 $('testRelayBtn')?.addEventListener('click',testRelay);
 $('clearRelayBtn')?.addEventListener('click',clearRelay);
 $('flowWindow').addEventListener('change',(e)=>{ state.flowWindowMs=Number(e.target.value)||300000; renderFlow(); renderPressure(); });
 $('clusterDepth')?.addEventListener('change',(e)=>{ state.clusterDepth=Number(e.target.value)||8; renderHeatmap(); });
-window.addEventListener('online',()=>{connectWs(true); fetchMeta(); fetchHeatmap();});
+window.addEventListener('online',()=>{connectWs(true); fetchMeta(); fetchHeatmap(); fetchPositioning();});
 window.addEventListener('offline',()=>setStatus('error','OFFLINE'));
-document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'){ connectWs(); fetchMeta(); fetchHeatmap(); } });
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'){ connectWs(); fetchMeta(); fetchHeatmap(); fetchPositioning(); } });
 
 (async function init(){
-  renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderRelaySettings();
+  renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderRelaySettings();
   connectWs(); setupTimers();
-  await Promise.allSettled([fetchMeta(),fetchHeatmap()]);
+  await Promise.allSettled([fetchMeta(),fetchHeatmap(),fetchPositioning()]);
   if('serviceWorker' in navigator){
     try{
       const reg=await navigator.serviceWorker.register('./sw.js');

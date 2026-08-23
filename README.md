@@ -1,4 +1,4 @@
-# LiqPulse v0.4.0
+# LiqPulse v0.5.0
 
 iPhone Safari/PWA向けの分析専用リアルタイム先物モニターです。注文機能はありません。
 
@@ -36,3 +36,15 @@ Cloudflareで既存Worker `liqpulse-relay` → Settings → Builds → Connect �
 - 現在価格を中心に、上側ショート清算→現在値→下側ロング清算で表示
 - 一次トリガー / 上値の壁 / 主要クラスターの自動ラベル
 - 表示段数 5 / 8 / 12 切替
+
+
+## v0.5.0
+- Binance USDⓈ-M公開統計をCloudflare Relay経由で取得
+- 全口座 Account Long/Short Ratio
+- Top Trader Account Long/Short Ratio
+- Top Trader Position Long/Short Ratio
+- BTC / ETH / SOL / XRP / ZECで取得を試行し、未上場・API制限時は安全に「取得失敗」表示
+- PressureにはPosition Ratioを小さな補助要素として追加（方向予測ではない）
+- ETH / SOLはBTCと同じLiquidation Radar / 清算クラスター表示を継続
+
+Long/Short統計はBinance USDⓈ-Mの公開市場統計であり、Hyperliquid全体の建玉比率ではありません。
