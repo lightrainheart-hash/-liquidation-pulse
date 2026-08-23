@@ -315,7 +315,7 @@ function recordWhaleSnapshot(ob){
   if(state.asset.symbol!=='BTC'||!ob) return;
   const now=Date.now(); if(state.whaleLastBookAt && now-state.whaleLastBookAt<7000) return; state.whaleLastBookAt=now;
   const spot=state.latestPrice||state.ctxByCoin.get('BTC')?.markPx; if(!Number.isFinite(spot)) return;
-  const rows=[...ob.asks.map(x=>({...x,side:'sell'})),...ob.bids.map(x=>({...x,side:'buy'}))].filter(x=>Math.abs(x.price/spot-1)<=0.035);
+  const rows=[...ob.asks.map(x=>({...x,side:'sell'})),...ob.bids.map(x=>({...x,side:'buy'}))].filter(x=>Math.abs(x.price-spot)<=5000);
   const notionals=rows.map(x=>x.notional).sort((a,b)=>a-b); const q=notionals[Math.max(0,Math.floor(notionals.length*.72))]||0; const threshold=Math.max(150000,q);
   const walls=rows.filter(x=>x.notional>=threshold).sort((a,b)=>b.notional-a.notional).slice(0,28).map(x=>({price:x.price,notional:x.notional,side:x.side,n:x.n||null}));
   const prev=state.whaleHistory[state.whaleHistory.length-1];
@@ -326,7 +326,7 @@ function recordWhaleSnapshot(ob){
 function whaleMetrics(){
   if(state.asset.symbol!=='BTC') return null;
   const ob=state.orderbook, spot=state.latestPrice||state.ctxByCoin.get('BTC')?.markPx; if(!ob||!Number.isFinite(spot)) return null;
-  const rows=[...ob.asks.map(x=>({...x,side:'sell'})),...ob.bids.map(x=>({...x,side:'buy'}))].filter(x=>Math.abs(x.price/spot-1)<=0.03);
+  const rows=[...ob.asks.map(x=>({...x,side:'sell'})),...ob.bids.map(x=>({...x,side:'buy'}))].filter(x=>Math.abs(x.price-spot)<=5000);
   const notionals=rows.map(x=>x.notional).sort((a,b)=>a-b); const q=notionals[Math.max(0,Math.floor(notionals.length*.70))]||0; const threshold=Math.max(120000,q);
   const walls=rows.filter(x=>x.notional>=threshold).sort((a,b)=>b.notional-a.notional);
   const sells=walls.filter(x=>x.side==='sell'), buys=walls.filter(x=>x.side==='buy');
@@ -349,9 +349,11 @@ function renderWhaleCanvas(metrics){
   ctx.fillStyle='#070d15';ctx.fillRect(0,0,w,h); const pad={l:10,r:54,t:12,b:24}; const iw=w-pad.l-pad.r, ih=h-pad.t-pad.b;
   const hist=state.whaleHistory.length?state.whaleHistory:loadWhaleHistory(); const allWalls=[]; for(const s of hist.slice(-70)){ for(const wall of s.walls||[]) allWalls.push(wall); for(const wall of s.disappeared||[]) allWalls.push(wall); }
   const spot=metrics?.spot||state.latestPrice; if(!Number.isFinite(spot)) return;
-  let minP=spot*.97,maxP=spot*1.03; for(const x of allWalls){ if(x.price>spot*.955&&x.price<spot*1.045){minP=Math.min(minP,x.price);maxP=Math.max(maxP,x.price);} }
+  // Keep BTC visually centered in a fixed $10,000 window so distant whale walls are easy to compare.
+  // This is a display range, not a claim that every level inside it is present in the current L2 snapshot.
+  const minP=spot-5000, maxP=spot+5000;
   const py=p=>pad.t+(maxP-p)/(maxP-minP)*ih; const tx=ts=>pad.l+clamp((ts-(Date.now()-45*60*1000))/(45*60*1000),0,1)*iw;
-  ctx.strokeStyle='#172131';ctx.lineWidth=1;ctx.font='9px -apple-system, sans-serif';ctx.fillStyle='#64758b'; for(let i=0;i<=4;i++){const y=pad.t+ih*i/4;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(pad.l+iw,y);ctx.stroke();const p=maxP-(maxP-minP)*i/4;ctx.fillText('$'+Math.round(p).toLocaleString(),pad.l+iw+5,y+3);}
+  ctx.strokeStyle='#172131';ctx.lineWidth=1;ctx.font='9px -apple-system, sans-serif';ctx.fillStyle='#64758b'; for(let i=0;i<=4;i++){const y=pad.t+ih*i/4;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(pad.l+iw,y);ctx.stroke();const p=maxP-(maxP-minP)*i/4;ctx.fillText('$'+Math.round(p).toLocaleString(),pad.l+iw+5,y+3);} ctx.fillStyle='#6f8199';ctx.font='8px -apple-system, sans-serif';ctx.fillText('表示幅 ±$5,000',pad.l+4,pad.t+10);
   const maxN=Math.max(1,...allWalls.map(x=>x.notional||0),...(metrics?.walls||[]).map(x=>x.notional||0));
   // historical wall segments
   for(let si=0;si<hist.length;si++){ const s=hist[si], x1=tx(s.ts), x2=tx(hist[si+1]?.ts||Date.now()); for(const wall of s.walls||[]){ if(wall.price<minP||wall.price>maxP) continue; const alpha=.16+.48*Math.sqrt(wall.notional/maxN); ctx.strokeStyle=wall.side==='sell'?`rgba(255,72,100,${alpha})`:`rgba(37,211,154,${alpha})`; ctx.lineWidth=1+4*Math.sqrt(wall.notional/maxN); ctx.beginPath();ctx.moveTo(x1,py(wall.price));ctx.lineTo(x2,py(wall.price));ctx.stroke(); } for(const wall of s.disappeared||[]){if(wall.price<minP||wall.price>maxP)continue;ctx.strokeStyle='rgba(160,91,108,.18)';ctx.lineWidth=1;ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(x1,py(wall.price));ctx.lineTo(x2,py(wall.price));ctx.stroke();ctx.setLineDash([]);} }
