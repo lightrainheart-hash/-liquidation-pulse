@@ -339,11 +339,29 @@ function whaleRows(ob,spot){
 function selectWhaleWalls(rows){
   if(!rows.length) return [];
   const notionals=rows.map(x=>x.notional).sort((a,b)=>a-b);
-  const q=notionals[Math.max(0,Math.floor((notionals.length-1)*.58))]||0;
-  const threshold=Math.max(120000,q);
-  return rows.filter(x=>x.notional>=threshold).sort((a,b)=>b.notional-a.notional).slice(0,40)
+  const q=notionals[Math.max(0,Math.floor((notionals.length-1)*.52))]||0;
+  const threshold=Math.max(100000,q);
+  return rows.filter(x=>x.notional>=threshold).sort((a,b)=>b.notional-a.notional).slice(0,64)
     .map(x=>({price:x.price,notional:x.notional,side:x.side,n:x.n||null}));
 }
+function whaleTier(notional){
+  if(notional>=100000000) return {label:'MEGA',width:10,alpha:.98};
+  if(notional>=50000000) return {label:'XL',width:8,alpha:.94};
+  if(notional>=25000000) return {label:'L',width:6.5,alpha:.90};
+  if(notional>=10000000) return {label:'M',width:5,alpha:.84};
+  if(notional>=5000000) return {label:'S',width:3.8,alpha:.76};
+  return {label:'',width:2.4,alpha:.66};
+}
+function mergeWhaleBands(walls,spot){
+  const bucket=100, map=new Map();
+  for(const w of walls){
+    const price=Math.round(w.price/bucket)*bucket, key=`${w.side}:${price}`;
+    const prev=map.get(key)||{side:w.side,price,notional:0,count:0,maxNotional:0};
+    prev.notional+=w.notional; prev.count+=1; prev.maxNotional=Math.max(prev.maxNotional,w.notional); map.set(key,prev);
+  }
+  return [...map.values()].filter(x=>Math.abs(x.price-spot)<=5000).sort((a,b)=>b.notional-a.notional);
+}
+
 function updateWhaleTracks(walls,spot,now){
   if(!state.whaleTracks.length) state.whaleTracks=loadWhaleTracks();
   const tolerance=Math.max(12,spot*.00022), matched=new Set();
@@ -429,17 +447,36 @@ function renderWhaleCanvas(metrics){
   // time grid + labels
   const timeSteps=4; for(let i=0;i<=timeSteps;i++){const x=pad.l+iw*i/timeSteps;ctx.strokeStyle='rgba(28,42,61,.65)';ctx.beginPath();ctx.moveTo(x,pad.t);ctx.lineTo(x,pad.t+ih);ctx.stroke();const ts=start+lookback*i/timeSteps,d=new Date(ts);const label=d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});ctx.fillStyle='#596b82';ctx.font='8px -apple-system, sans-serif';ctx.fillText(label,Math.max(pad.l,x-15),h-8);}
   ctx.fillStyle='#6f8199';ctx.font='8px -apple-system, sans-serif';ctx.fillText(`±$5,000 / ${Math.round(lookback/3600000)}H履歴`,pad.l+4,pad.t+10);
-  // persistent whale wall tracks: horizontal segments in time-price space
+  // persistent whale wall tracks: horizontal price bands with duration encoded by x-length.
   const tracks=(state.whaleTracks.length?state.whaleTracks:loadWhaleTracks()).filter(t=>(t.lastSeen||0)>=start&&t.price>=minP&&t.price<=maxP);
   const maxN=Math.max(1,...tracks.map(t=>t.maxNotional||t.lastNotional||0),...(metrics?.walls||[]).map(x=>x.notional||0));
   for(const t of tracks){
-    const x1=tx(Math.max(start,t.firstSeen)), x2=tx(Math.min(end,t.endedAt||end)), y=py(t.price), strength=Math.sqrt((t.maxNotional||t.lastNotional||0)/maxN);
-    const active=!t.endedAt, alpha=(active?.34:.12)+.50*strength;
-    ctx.strokeStyle=t.side==='sell'?`rgba(255,72,100,${alpha})`:`rgba(37,211,154,${alpha})`;
-    ctx.lineWidth=active?1.5+6*strength:1+3*strength;
-    if(!active) ctx.setLineDash([5,4]);
+    const x1=tx(Math.max(start,t.firstSeen)), x2=tx(Math.min(end,t.endedAt||end)), y=py(t.price), n=t.maxNotional||t.lastNotional||0;
+    const active=!t.endedAt, tier=whaleTier(n), strength=Math.sqrt(n/maxN);
+    const alpha=Math.min(1,(active?.32:.10)+tier.alpha*.58*strength);
+    const base=t.side==='sell'?[255,72,100]:[37,211,154];
+    ctx.strokeStyle=`rgba(${base[0]},${base[1]},${base[2]},${alpha})`;
+    ctx.lineWidth=active?Math.max(tier.width,2.2+7.5*strength):Math.max(1.3,tier.width*.45);
+    if(!active) ctx.setLineDash([7,5]);
     ctx.beginPath();ctx.moveTo(x1,y);ctx.lineTo(x2,y);ctx.stroke();ctx.setLineDash([]);
-    if(active&&x2-x1>28){ctx.fillStyle=t.side==='sell'?'rgba(255,104,125,.82)':'rgba(63,220,172,.82)';ctx.font='7px -apple-system, sans-serif';ctx.fillText(money(t.maxNotional||t.lastNotional),Math.min(x2-38,w-100),y-3);}
+    // soft band/glow for major walls, visually closer to institutional heat maps.
+    if(active&&n>=10000000){
+      ctx.strokeStyle=`rgba(${base[0]},${base[1]},${base[2]},${Math.min(.18,.05+.12*strength)})`;
+      ctx.lineWidth=Math.max(12,tier.width*2.2);ctx.beginPath();ctx.moveTo(x1,y);ctx.lineTo(x2,y);ctx.stroke();
+    }
+    if(active&&x2-x1>34&&n>=5000000){
+      ctx.fillStyle=t.side==='sell'?'rgba(255,126,145,.92)':'rgba(96,230,187,.92)';ctx.font='7px -apple-system, sans-serif';
+      const txt=`${tier.label?`${tier.label} `:''}${money(n)}`;ctx.fillText(txt,Math.min(x2-48,w-112),y-5);
+    }
+  }
+  // Current snapshot bands: guarantees distant large round-number liquidity is visible immediately.
+  const currentBands=mergeWhaleBands(metrics?.walls||[],spot).slice(0,18);
+  for(const b of currentBands){
+    const y=py(b.price), tier=whaleTier(b.notional), base=b.side==='sell'?[255,72,100]:[37,211,154];
+    const x1=pad.l+iw*.73, x2=pad.l+iw;
+    ctx.strokeStyle=`rgba(${base[0]},${base[1]},${base[2]},${tier.alpha})`;ctx.lineWidth=tier.width;
+    ctx.beginPath();ctx.moveTo(x1,y);ctx.lineTo(x2,y);ctx.stroke();
+    if(b.notional>=10000000){ctx.fillStyle=`rgba(${base[0]},${base[1]},${base[2]},.95)`;ctx.font='7px -apple-system, sans-serif';ctx.fillText(`${money(b.notional)} @ ${Math.round(b.price).toLocaleString()}`,Math.max(pad.l,x1-92),y-5);}
   }
   // 5m BTC candles, intentionally subtle so whale walls remain the primary visual layer.
   const candles=whaleCandles(start,end), candleW=Math.max(2,Math.min(7,iw/Math.max(20,candles.length)*.62));
@@ -452,7 +489,11 @@ function renderWhaleOrderMap(){
   const m=whaleMetrics(); if(!m){setText('whalePressureBadge','取得中');setText('whaleBookAge','—');return;}
   const fmt=(x)=>x?priceFmt(x.price):'—'; setText('whaleNearestSell',fmt(m.nearestSell)); setText('whaleNearestBuy',fmt(m.nearestBuy)); setText('whaleNearestSellMeta',m.nearestSell?`+${((m.nearestSell.price/m.spot-1)*100).toFixed(2)}% / ${money(m.nearestSell.notional)}`:'—'); setText('whaleNearestBuyMeta',m.nearestBuy?`${((m.nearestBuy.price/m.spot-1)*100).toFixed(2)}% / ${money(m.nearestBuy.notional)}`:'—'); setText('whaleSellTotal',money(m.sellTotal)); setText('whaleBuyTotal',money(m.buyTotal));
   const total=m.sellTotal+m.buyTotal, sellPct=total?m.sellTotal/total:.5; const badge=$('whalePressureBadge'); let label='均衡',tone='neutral'; if(sellPct>=.62){label='売り壁優勢';tone='down';}else if(sellPct<=.38){label='買い壁優勢';tone='up';} if(badge){badge.textContent=label;badge.className=`signal-badge ${tone}`;} setText('whaleBookAge','LIVE + 履歴');
-  let insight='大口板は拮抗しています。'; if(sellPct>=.62) insight=`上側の大口売り壁が優勢 (${(sellPct*100).toFixed(0)}%)。壁が長時間残るか、吸収・消失するかを監視。`; else if(sellPct<=.38) insight=`下側の大口買い壁が優勢 (${((1-sellPct)*100).toFixed(0)}%)。買い支えの継続時間と壁の消失を監視。`; if(m.nearestSell&&Math.abs(m.nearestSell.price/m.spot-1)<.004) insight+=' 直上0.4%以内に大口売り壁あり。'; if(m.nearestBuy&&Math.abs(m.nearestBuy.price/m.spot-1)<.004) insight+=' 直下0.4%以内に大口買い壁あり。'; setText('whaleInsight',insight);
+  let insight='大口板は拮抗しています。'; if(sellPct>=.62) insight=`上側の大口売り壁が優勢 (${(sellPct*100).toFixed(0)}%)。壁が長時間残るか、吸収・消失するかを監視。`; else if(sellPct<=.38) insight=`下側の大口買い壁が優勢 (${((1-sellPct)*100).toFixed(0)}%)。買い支えの継続時間と壁の消失を監視。`; if(m.nearestSell&&Math.abs(m.nearestSell.price/m.spot-1)<.004) insight+=' 直上0.4%以内に大口売り壁あり。'; if(m.nearestBuy&&Math.abs(m.nearestBuy.price/m.spot-1)<.004) insight+=' 直下0.4%以内に大口買い壁あり。';
+  const bands=mergeWhaleBands(m.walls,m.spot), topSell=bands.filter(x=>x.side==='sell'&&x.price>m.spot)[0], topBuy=bands.filter(x=>x.side==='buy'&&x.price<m.spot)[0];
+  if(topSell&&topSell.notional>=10000000) insight+=` 強い上壁 ${priceFmt(topSell.price)} (${money(topSell.notional)})。`;
+  if(topBuy&&topBuy.notional>=10000000) insight+=` 強い下壁 ${priceFmt(topBuy.price)} (${money(topBuy.notional)})。`;
+  setText('whaleInsight',insight);
   const list=$('whaleOrderList'); if(list){list.textContent=''; const top=[...m.walls].sort((a,b)=>b.notional-a.notional).slice(0,10), max=Math.max(1,...top.map(x=>x.notional)); for(const x of top){const row=document.createElement('div');row.className=`whale-order-row ${x.side}`;const p=document.createElement('b');p.textContent=priceFmt(x.price);const bar=document.createElement('div');bar.className='bar';const i=document.createElement('i');i.style.width=`${Math.max(4,100*x.notional/max)}%`;bar.appendChild(i);const val=document.createElement('strong');val.textContent=money(x.notional);const ds=document.createElement('small');const d=(x.price/m.spot-1)*100, tr=activeTrackForWall(x,m.spot);ds.textContent=`${d>=0?'+':''}${d.toFixed(2)}% · ${tr?formatDuration(Date.now()-tr.firstSeen):'new'}`;row.append(p,bar,val,ds);list.appendChild(row);} }
   renderWhaleCanvas(m);
 }

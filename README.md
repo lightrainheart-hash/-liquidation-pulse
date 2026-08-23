@@ -1,4 +1,4 @@
-# LiqPulse v1.2.0
+# LiqPulse v1.3.0
 
 ## BTC Whale Order History Map
 
