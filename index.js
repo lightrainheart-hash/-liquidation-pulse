@@ -139,12 +139,12 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === '/health') {
-      return Response.json({ ok: true, service: 'liqpulse-relay', version: '1.1.1' }, { headers });
+      return Response.json({ ok: true, service: 'liqpulse-relay', version: '1.2.0' }, { headers });
     }
 
     if (url.pathname === '/capabilities') {
       return Response.json({
-        version: '1.1.1',
+        version: '1.2.0',
         market: ['BTC','ETH','SOL','XRP','ZEC','SP500','GOLD','SILVER'],
         heatmap: ['BTC','ETH','SOL','XRP','ZEC'],
         positioning: ['BTC','ETH','SOL','XRP','ZEC'],
@@ -231,10 +231,26 @@ export default {
       const symbol=bookMatch[1].toUpperCase(), coin=BOOK_COINS[symbol];
       if(!coin) return Response.json({error:'unsupported_symbol'}, {status:400,headers});
       try{
-        const upstream=await fetch(HYPERLIQUID_INFO,{method:'POST',headers:{'content-type':'application/json','accept':'application/json'},body:JSON.stringify({type:'l2Book',coin,nSigFigs:5})});
-        const text=await upstream.text();
-        const outHeaders=new Headers(headers); outHeaders.set('Content-Type','application/json; charset=utf-8'); outHeaders.set('Cache-Control','public, max-age=5');
-        return new Response(text,{status:upstream.status,headers:outHeaders});
+        const fetchBook=async(nSigFigs)=>{
+          const r=await fetch(HYPERLIQUID_INFO,{method:'POST',headers:{'content-type':'application/json','accept':'application/json'},body:JSON.stringify({type:'l2Book',coin,nSigFigs})});
+          if(!r.ok) throw new Error(`l2Book ${nSigFigs}: HTTP ${r.status}`);
+          return await r.json();
+        };
+        const precise=await fetchBook(5);
+        if(symbol!=='BTC'){
+          return Response.json(precise,{headers:{...headers,'Cache-Control':'public, max-age=5'}});
+        }
+        // BTC gets additional aggregated books so the UI can visualize real resting liquidity
+        // across a much wider +/-$5,000 window. We never sum overlapping granularities.
+        const [mid,coarse]=await Promise.all([fetchBook(3).catch(()=>null),fetchBook(2).catch(()=>null)]);
+        const bestBid=Number(precise?.levels?.[0]?.[0]?.px), bestAsk=Number(precise?.levels?.[1]?.[0]?.px);
+        const spot=Number.isFinite(bestBid)&&Number.isFinite(bestAsk)?(bestBid+bestAsk)/2:(Number(bestBid)||Number(bestAsk));
+        const pick=(raw,side,minDist,maxDist)=>((raw?.levels?.[side]||[]).filter(x=>{
+          const p=Number(x?.px), d=Math.abs(p-spot); return Number.isFinite(p)&&Number.isFinite(spot)&&d>=minDist&&d<maxDist;
+        }));
+        const wideBids=[...pick(precise,0,0,350),...pick(mid,0,350,2500),...pick(coarse,0,2500,5500)];
+        const wideAsks=[...pick(precise,1,0,350),...pick(mid,1,350,2500),...pick(coarse,1,2500,5500)];
+        return Response.json({...precise,wideLevels:[wideBids,wideAsks],wideMeta:{spot,rangeUsd:5000,sourceSigFigs:[5,3,2]}},{headers:{...headers,'Cache-Control':'public, max-age=5'}});
       }catch(error){ return Response.json({error:'book_upstream_failed',message:String(error?.message||error)},{status:502,headers}); }
     }
 

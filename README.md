@@ -1,32 +1,20 @@
-# LiqPulse v1.1.1
+# LiqPulse v1.2.0
 
-S&P 500 を最優先に強化した分析専用リアルタイム・マーケットモニターです。BTC / ETH / SOL / XRP / ZEC / GOLD / SILVER も引き続き利用できます。
+## BTC Whale Order History Map
 
-## v1.1.1 — S&P 500 Focus
-- 起動時の既定銘柄を S&P 500 に変更。
-- S&P 500 Command Center を画面上部に追加。
-- S&P 500 構成銘柄の上昇参加率、等ウェイト騰落率、時価総額加重騰落率、大型7社、セクター参加率を統合。
-- 市場健全度 0–100 と「広範な上昇 / 上昇優勢 / 均衡 / 下落優勢 / 広範な下落」を表示。
-- 時価総額加重と等ウェイトの乖離から「大型株主導 / 中小型まで強い / 均衡型」を判定。
-- S&P 500 内部データを AI Quick View / Market Bias Engine の方向スコアへ統合。
-- 15分の市場健全度変化をローカル履歴から計算（履歴蓄積後に表示）。
-- S&P 500 では「清算ライン」と誤認しないよう、実清算データがない場合は推定反応ラインとして扱う。
-- LiqPulse独自 S&P 500 Market Map を継続。Finviz公式リンクも残す。
+- BTC price range is fixed at current price ±$5,000.
+- Worker combines Hyperliquid L2 books at multiple aggregation granularities (5/3/2 significant figures) so real resting liquidity farther from spot can be visualized without inventing levels.
+- Whale walls are tracked over time in localStorage for up to 6 hours.
+- Chart supports 1H / 3H / 6H history.
+- Horizontal line length = observed wall lifetime; thickness = maximum observed notional.
+- 5-minute BTC candles are drawn behind whale walls.
+- Disappeared walls are shown as dashed/transparent historical segments. Disappearance does not prove cancellation or execution.
+- Current wall list includes estimated observed duration.
 
-## データについて
-S&P 500 Market Map は公開スクリーナーデータからLiqPulseが独自描画します。無料公開データは遅延する場合があります。
+## Data caveat
 
-分析専用です。AI判断・市場健全度・推定反応ラインは売買判断の補助指標であり、将来価格や到達を保証するものではありません。
+This is a Hyperliquid-derived order-map, not CoinGlass exchange-wide proprietary whale-order data. Aggregated L2 levels are real order-book aggregates returned by Hyperliquid; LiqPulse does not fabricate distant orders.
 
+## Deployment
 
-## v1.1.1
-- BTC Whale Order Map: Hyperliquid L2の大口売り壁/買い壁を時系列で可視化。消失壁は推定表示。
-- S&P 500 Command Center: 最強/最弱業種、上位/下位寄与銘柄、内部リスク表示を追加。
-- BTCチャートはAI Quick View直下に配置。
-
-
-## v1.1.1
-- BTC Whale Order Map の表示レンジを現在価格中心の **±$5,000** に固定。
-- 大口板の抽出対象も ±$5,000 に拡張。
-- チャート左上に表示レンジを明記。
-- 取得元L2に存在しない遠方注文を推測生成しない設計は維持。
+Upload all files to the GitHub repository and commit to `main`. Cloudflare Workers Builds should deploy automatically.
