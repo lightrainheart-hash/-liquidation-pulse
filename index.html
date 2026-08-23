@@ -8,15 +8,15 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="LiqPulse" />
   <link rel="manifest" href="./manifest.webmanifest" />
-  <link rel="apple-touch-icon" href="./icons/icon-180.png" />
+  <link rel="apple-touch-icon" href="./icon-180.png" />
   <link rel="stylesheet" href="./styles.css" />
-  <title>LiqPulse</title>
+  <title>LiqPulse v0.2</title>
 </head>
 <body>
   <main class="app-shell">
     <header class="topbar">
       <div>
-        <div class="eyebrow">LIVE DERIVATIVES MONITOR</div>
+        <div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v0.2</span></div>
         <h1>LiqPulse</h1>
       </div>
       <div id="connBadge" class="status offline"><span></span><b>接続中</b></div>
@@ -26,7 +26,7 @@
 
     <section class="hero card">
       <div>
-        <div class="symbol-line"><span id="assetName">Bitcoin</span><small id="venueLabel">Hyperliquid</small></div>
+        <div class="symbol-line"><span id="assetName">Bitcoin</span><small>Hyperliquid</small></div>
         <div id="price" class="price">—</div>
         <div class="meta-row">
           <span>Mark <b id="markPx">—</b></span>
@@ -37,44 +37,64 @@
       <button id="refreshBtn" class="icon-btn" aria-label="更新">↻</button>
     </section>
 
-    <section class="grid two">
-      <article class="card">
-        <div class="card-title">Long / Short フロー</div>
-        <div class="ratio-row"><b class="green" id="longPct">50.0%</b><b class="red" id="shortPct">50.0%</b></div>
-        <div class="ratio"><i id="longBar"></i><i id="shortBar"></i></div>
-        <div class="hint">直近5分の成行約定をUSD換算した買い/売り比率。建玉比率とは別指標です。</div>
-      </article>
-      <article class="card">
-        <div class="card-title">Pressure</div>
-        <div class="score"><span>上方向スクイーズ</span><b id="upScore">—</b></div>
-        <div class="score"><span>下方向カスケード</span><b id="downScore">—</b></div>
-        <div class="hint">清算クラスター・距離・Funding・取引フローから暫定算出。</div>
-      </article>
-    </section>
-
     <section class="card heatmap-card">
       <div class="section-head">
         <div>
           <div class="card-title">清算クラスター</div>
-          <div class="subtitle" id="heatmapSource">BTC / ETH / SOL: HyperPerps実ポジション集計</div>
+          <div class="subtitle">実ポジション由来 / BTC・ETH・SOL</div>
         </div>
         <span id="heatmapAge" class="pill">—</span>
       </div>
+      <div id="clusterSummary" class="cluster-summary hidden"></div>
       <div id="heatmapNotice" class="notice hidden"></div>
       <div id="heatmap" class="heatmap"></div>
+    </section>
+
+    <section class="grid two">
+      <article class="card">
+        <div class="section-head compact-head">
+          <div class="card-title">Taker Buy / Sell</div>
+          <select id="flowWindow" class="select-pill" aria-label="集計期間">
+            <option value="300000">5分</option>
+            <option value="900000">15分</option>
+            <option value="3600000">1時間</option>
+          </select>
+        </div>
+        <div class="ratio-row"><b class="green" id="buyPct">50.0%</b><b class="red" id="sellPct">50.0%</b></div>
+        <div class="ratio"><i id="buyBar"></i><i id="sellBar"></i></div>
+        <div class="flow-stats mini">
+          <div><span>BUY</span><b id="buyUsd" class="green">$0</b></div>
+          <div><span>SELL</span><b id="sellUsd" class="red">$0</b></div>
+        </div>
+        <div class="hint">成行買い / 成行売りの金額比率。建玉Long/Short比率ではありません。</div>
+      </article>
+
+      <article class="card">
+        <div class="card-title">Liquidation Bias</div>
+        <div class="ratio-row"><b class="green" id="shortLiqPct">—</b><b class="red" id="longLiqPct">—</b></div>
+        <div class="ratio liq-ratio"><i id="shortLiqBar"></i><i id="longLiqBar"></i></div>
+        <div class="hint">現在値から±10%以内の清算想定額を距離加重。緑=上側ショート清算、赤=下側ロング清算。</div>
+      </article>
+    </section>
+
+    <section class="card">
+      <div class="card-title">Pressure</div>
+      <div class="score"><span>上方向スクイーズ</span><b id="upScore">—</b></div>
+      <div class="score"><span>下方向カスケード</span><b id="downScore">—</b></div>
+      <div class="hint">清算クラスター・距離・Funding・Takerフローから算出する補助スコア。方向予測ではありません。</div>
     </section>
 
     <section class="card">
       <div class="section-head">
         <div>
           <div class="card-title">リアルタイム取引フロー</div>
-          <div class="subtitle">WebSocket / 直近5分</div>
+          <div class="subtitle">WebSocket</div>
         </div>
         <span id="tradeCount" class="pill">0 trades</span>
       </div>
       <div class="flow-stats">
-        <div><span>BUY</span><b id="buyUsd" class="green">$0</b></div>
-        <div><span>SELL</span><b id="sellUsd" class="red">$0</b></div>
+        <div><span>BUY</span><b id="buyUsd2" class="green">$0</b></div>
+        <div><span>SELL</span><b id="sellUsd2" class="red">$0</b></div>
       </div>
     </section>
 
@@ -84,13 +104,14 @@
         <li><span>価格 / Trades</span><b id="statusWs">接続待ち</b></li>
         <li><span>OI / Funding</span><b id="statusInfo">取得待ち</b></li>
         <li><span>清算マップ</span><b id="statusHeatmap">取得待ち</b></li>
+        <li><span>清算データ経路</span><b id="statusHeatmapRoute">—</b></li>
       </ul>
     </section>
 
     <footer>
-      分析専用。注文機能なし。清算マップは価格到達を保証するものではありません。
+      分析専用・注文機能なし。清算クラスターは価格到達を保証しません。Account L/Sは未実装です。
     </footer>
   </main>
-  <script src="./app.js" defer></script>
+  <script src="./app.js?v=0.2.0" defer></script>
 </body>
 </html>

@@ -3,11 +3,17 @@
 const CONFIG = {
   infoUrl: 'https://api.hyperliquid.xyz/info',
   wsUrl: 'wss://api.hyperliquid.xyz/ws',
-  heatmapBase: 'https://trade.hyperperps.app/api/public/heatmap/',
+  heatmapDirect: 'https://trade.hyperperps.app/api/public/heatmap/',
+  // Public, no-auth fallbacks. Public market data only; no API keys or user data are sent.
+  heatmapFallbacks: [
+    (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    (url) => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
+  ],
   infoPollMs: 15000,
   heatmapPollMs: 60000,
-  tradeWindowMs: 5 * 60 * 1000,
-  wsStaleMs: 12000,
+  maxTradeWindowMs: 60 * 60 * 1000,
+  wsStaleMs: 15000,
+  liqBiasRangePct: 0.10,
 };
 
 const ASSETS = [
@@ -23,6 +29,7 @@ const state = {
   ws:null,
   wsBackoff:1000,
   tradeEvents:[],
+  flowWindowMs:300000,
   ctxByCoin:new Map(),
   latestPrice:null,
   heatmap:null,
@@ -46,14 +53,11 @@ function priceFmt(v){
   const d=v>=1000?0:v>=10?2:v>=1?3:5;
   return '$'+v.toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
 }
-function pct(v, digits=4){
-  if(!Number.isFinite(v)) return '—';
-  return `${(v*100).toFixed(digits)}%`;
-}
-function clamp(v,min,max){return Math.max(min,Math.min(max,v));}
-function setStatus(kind,text){
-  const el=$('connBadge'); el.className=`status ${kind}`; el.querySelector('b').textContent=text;
-}
+function pct(v,digits=4){ return Number.isFinite(v)?`${(v*100).toFixed(digits)}%`:'—'; }
+function distPct(price,spot){ return Number.isFinite(price)&&Number.isFinite(spot)&&spot!==0?(price/spot-1):NaN; }
+function clamp(v,min,max){ return Math.max(min,Math.min(max,v)); }
+function setStatus(kind,text){ const el=$('connBadge'); el.className=`status ${kind}`; el.querySelector('b').textContent=text; }
+function setText(id,text){ const el=$(id); if(el) el.textContent=text; }
 
 function renderAssetTabs(){
   const el=$('assetTabs'); el.textContent='';
@@ -71,19 +75,19 @@ async function switchAsset(symbol){
   state.switching=true;
   state.asset=ASSETS.find(x=>x.symbol===symbol)||ASSETS[0];
   state.tradeEvents=[]; state.heatmap=null; state.latestPrice=null;
-  renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap();
+  renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias();
   connectWs(true);
   await Promise.allSettled([fetchMeta(), fetchHeatmap()]);
   state.switching=false;
 }
 
 function renderBase(){
-  $('assetName').textContent=state.asset.name;
-  $('price').textContent=priceFmt(state.latestPrice);
+  setText('assetName',state.asset.name);
+  setText('price',priceFmt(state.latestPrice));
   const c=state.ctxByCoin.get(state.asset.symbol);
-  $('markPx').textContent=c?priceFmt(c.markPx):'—';
-  $('openInterest').textContent=c?money(c.openInterestUsd):'—';
-  $('funding').textContent=c?pct(c.funding,4):'—';
+  setText('markPx',c?priceFmt(c.markPx):'—');
+  setText('openInterest',c?money(c.openInterestUsd):'—');
+  setText('funding',c?pct(c.funding,4):'—');
 }
 
 async function fetchMeta(){
@@ -100,20 +104,20 @@ async function fetchMeta(){
     });
     const c=state.ctxByCoin.get(state.asset.symbol);
     if(c && !state.latestPrice) state.latestPrice=c.markPx;
-    $('statusInfo').textContent='正常';
+    setText('statusInfo','正常');
     renderBase(); renderPressure();
   }catch(err){
-    console.warn('meta',err); $('statusInfo').textContent='取得失敗';
+    console.warn('meta',err); setText('statusInfo','取得失敗');
   }
 }
 
 function connectWs(force=false){
   if(force && state.ws){ try{state.ws.onclose=null; state.ws.close();}catch{} state.ws=null; }
   if(state.ws && (state.ws.readyState===0 || state.ws.readyState===1)) return;
-  setStatus('offline','接続中'); $('statusWs').textContent='接続中';
+  setStatus('offline','接続中'); setText('statusWs','接続中');
   const ws=new WebSocket(CONFIG.wsUrl); state.ws=ws;
   ws.onopen=()=>{
-    state.wsBackoff=1000; state.lastWsAt=Date.now(); setStatus('online','LIVE'); $('statusWs').textContent='LIVE';
+    state.wsBackoff=1000; state.lastWsAt=Date.now(); setStatus('online','LIVE'); setText('statusWs','LIVE');
     ws.send(JSON.stringify({method:'subscribe',subscription:{type:'trades',coin:state.asset.symbol}}));
     ws.send(JSON.stringify({method:'subscribe',subscription:{type:'allMids'}}));
   };
@@ -122,13 +126,14 @@ function connectWs(force=false){
     let msg; try{msg=JSON.parse(ev.data);}catch{return;}
     if(msg.channel==='trades' && Array.isArray(msg.data)) ingestTrades(msg.data);
     if(msg.channel==='allMids' && msg.data?.mids){
-      const p=Number(msg.data.mids[state.asset.symbol]); if(Number.isFinite(p)){state.latestPrice=p; $('price').textContent=priceFmt(p); renderHeatmap();}
+      const p=Number(msg.data.mids[state.asset.symbol]);
+      if(Number.isFinite(p)){ state.latestPrice=p; setText('price',priceFmt(p)); renderHeatmap(); renderLiqBias(); renderPressure(); }
     }
   };
-  ws.onerror=()=>{setStatus('error','再接続');};
+  ws.onerror=()=>setStatus('error','再接続');
   ws.onclose=()=>{
     if(state.ws!==ws) return;
-    $('statusWs').textContent='再接続中'; setStatus('error','再接続');
+    setText('statusWs','再接続中'); setStatus('error','再接続');
     const wait=state.wsBackoff; state.wsBackoff=Math.min(30000,state.wsBackoff*2);
     setTimeout(()=>connectWs(),wait);
   };
@@ -139,115 +144,201 @@ function ingestTrades(trades){
   for(const t of trades){
     const px=Number(t.px), sz=Number(t.sz), ts=Number(t.time)||now;
     if(!Number.isFinite(px)||!Number.isFinite(sz)) continue;
-    // Hyperliquid trade side: B = aggressive buyer, A = aggressive seller.
     state.tradeEvents.push({ts,usd:px*sz,buy:t.side==='B'});
     state.latestPrice=px;
   }
-  state.tradeEvents=state.tradeEvents.filter(x=>x.ts>=now-CONFIG.tradeWindowMs);
+  state.tradeEvents=state.tradeEvents.filter(x=>x.ts>=now-CONFIG.maxTradeWindowMs);
   renderFlow(); renderBase(); renderPressure();
 }
 
-function flowTotals(){
-  const cutoff=Date.now()-CONFIG.tradeWindowMs; let buy=0,sell=0,count=0;
-  for(const t of state.tradeEvents){if(t.ts<cutoff) continue; count++; if(t.buy) buy+=t.usd; else sell+=t.usd;}
+function flowTotals(windowMs=state.flowWindowMs){
+  const cutoff=Date.now()-windowMs; let buy=0,sell=0,count=0;
+  for(const t of state.tradeEvents){ if(t.ts<cutoff) continue; count++; if(t.buy) buy+=t.usd; else sell+=t.usd; }
   return {buy,sell,count,total:buy+sell};
 }
 function renderFlow(){
-  const f=flowTotals(), lp=f.total?f.buy/f.total:0.5, sp=1-lp;
-  $('longPct').textContent=(lp*100).toFixed(1)+'%'; $('shortPct').textContent=(sp*100).toFixed(1)+'%';
-  $('longBar').style.width=(lp*100)+'%'; $('shortBar').style.width=(sp*100)+'%';
-  $('buyUsd').textContent=money(f.buy); $('sellUsd').textContent=money(f.sell); $('tradeCount').textContent=`${f.count.toLocaleString()} trades`;
+  const f=flowTotals(), bp=f.total?f.buy/f.total:0.5, sp=1-bp;
+  setText('buyPct',(bp*100).toFixed(1)+'%'); setText('sellPct',(sp*100).toFixed(1)+'%');
+  $('buyBar').style.width=(bp*100)+'%'; $('sellBar').style.width=(sp*100)+'%';
+  setText('buyUsd',money(f.buy)); setText('sellUsd',money(f.sell));
+  setText('buyUsd2',money(f.buy)); setText('sellUsd2',money(f.sell));
+  setText('tradeCount',`${f.count.toLocaleString()} trades`);
+}
+
+async function fetchJsonWithTimeout(url,timeoutMs=10000){
+  const ac=new AbortController(); const timer=setTimeout(()=>ac.abort(),timeoutMs);
+  try{
+    const res=await fetch(url,{cache:'no-store',signal:ac.signal,headers:{'accept':'application/json,text/plain,*/*'}});
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text=await res.text();
+    return JSON.parse(text);
+  }finally{ clearTimeout(timer); }
 }
 
 async function fetchHeatmap(){
   if(!state.asset.heatmap){
-    $('statusHeatmap').textContent='未対応'; state.heatmap=null; renderHeatmap(); return;
+    setText('statusHeatmap','未対応'); setText('statusHeatmapRoute','—'); state.heatmap=null; renderHeatmap(); renderLiqBias(); return;
   }
-  $('statusHeatmap').textContent='取得中';
-  try{
-    const res=await fetch(CONFIG.heatmapBase+encodeURIComponent(state.asset.symbol),{cache:'no-store'});
-    if(!res.ok) throw new Error(`HTTP ${res.status}`);
-    const raw=await res.json();
-    state.heatmap=normalizeHeatmap(raw);
-    $('statusHeatmap').textContent=state.heatmap.levels.length?'正常':'形式未対応';
-  }catch(err){
-    console.warn('heatmap',err); state.heatmap=null; $('statusHeatmap').textContent='取得失敗';
+  setText('statusHeatmap','取得中'); setText('statusHeatmapRoute','接続中');
+  const direct=CONFIG.heatmapDirect+encodeURIComponent(state.asset.symbol);
+  const routes=[{name:'Direct',url:direct},...CONFIG.heatmapFallbacks.map((fn,i)=>({name:i===0?'Fallback A':'Fallback B',url:fn(direct)}))];
+  let lastErr=null;
+  for(const route of routes){
+    try{
+      const raw=await fetchJsonWithTimeout(route.url,10000);
+      const normalized=normalizeHeatmap(raw);
+      if(!normalized.levels.length) throw new Error('No recognized liquidation levels');
+      state.heatmap=normalized;
+      setText('statusHeatmap','正常'); setText('statusHeatmapRoute',route.name);
+      renderHeatmap(); renderLiqBias(); renderPressure(); return;
+    }catch(err){ lastErr=err; console.warn('heatmap route failed',route.name,err); }
   }
-  renderHeatmap(); renderPressure();
+  state.heatmap=null; setText('statusHeatmap','取得失敗'); setText('statusHeatmapRoute','全経路失敗');
+  console.warn('heatmap all routes failed',lastErr);
+  renderHeatmap(); renderLiqBias(); renderPressure();
 }
 
 function normalizeHeatmap(raw){
-  // The public API is intentionally parsed defensively because the provider marks the endpoint as public but may evolve its schema.
   const levels=[];
-  const push=(x,sideHint)=>{
-    if(!x||typeof x!=='object') return;
-    const p=Number(x.price ?? x.liqPrice ?? x.liquidationPrice ?? x.level ?? x.px);
-    const n=Number(x.notional ?? x.sizeUsd ?? x.usd ?? x.value ?? x.size ?? x.totalNotional);
-    let side=(x.side ?? x.direction ?? x.type ?? sideHint ?? '').toString().toLowerCase();
+  const spot=state.latestPrice || state.ctxByCoin.get(state.asset.symbol)?.markPx;
+
+  const maybePush=(obj,sideHint='')=>{
+    if(!obj || typeof obj!=='object' || Array.isArray(obj)) return;
+    const keys=Object.keys(obj);
+    const pick=(names)=>{ for(const n of names){ if(n in obj) return obj[n]; } return undefined; };
+    const p=Number(pick(['price','liqPrice','liquidationPrice','level','px','price_level','priceLevel']));
+    let n=Number(pick(['notional','sizeUsd','size_usd','usd','value','notionalUsd','notional_usd','totalNotional','total_notional','size']));
+    let side=String(pick(['side','direction','positionSide','position_side','type']) ?? sideHint ?? '').toLowerCase();
     if(side.includes('short')||side==='s') side='short'; else if(side.includes('long')||side==='l') side='long'; else side='';
-    if(Number.isFinite(p)&&Number.isFinite(n)&&n>0) levels.push({price:p,notional:n,side});
+    if(Number.isFinite(p) && Number.isFinite(n) && n>0){
+      if(!side && Number.isFinite(spot)) side=p>spot?'short':'long';
+      levels.push({price:p,notional:n,side});
+      return;
+    }
+    // Some APIs use arrays/objects with price as key and notional as value.
+    if(keys.length===1){
+      const kp=Number(keys[0]), kv=Number(obj[keys[0]]);
+      if(Number.isFinite(kp)&&Number.isFinite(kv)&&kv>0){
+        const inferred=sideHint || (Number.isFinite(spot)?(kp>spot?'short':'long'):'');
+        levels.push({price:kp,notional:kv,side:inferred});
+      }
+    }
   };
-  const walk=(node,keyHint='',depth=0)=>{
-    if(depth>5 || node==null) return;
-    if(Array.isArray(node)){ node.forEach(x=>{push(x,keyHint); if(typeof x==='object') walk(x,keyHint,depth+1);}); return; }
+
+  const walk=(node,hint='',depth=0)=>{
+    if(depth>8 || node==null) return;
+    if(Array.isArray(node)){
+      // flat pair [price, notional] or [price, notional, side]
+      if(node.length>=2 && Number.isFinite(Number(node[0])) && Number.isFinite(Number(node[1]))){
+        const p=Number(node[0]), n=Number(node[1]);
+        let side=String(node[2]??hint??'').toLowerCase();
+        if(side.includes('short')||side==='s') side='short'; else if(side.includes('long')||side==='l') side='long'; else side=Number.isFinite(spot)?(p>spot?'short':'long'):'';
+        if(n>0) levels.push({price:p,notional:n,side});
+        return;
+      }
+      node.forEach(x=>walk(x,hint,depth+1)); return;
+    }
     if(typeof node!=='object') return;
+    maybePush(node,hint);
     for(const [k,v] of Object.entries(node)){
-      const kh=k.toLowerCase(); let hint=keyHint;
-      if(kh.includes('short')) hint='short'; if(kh.includes('long')) hint='long';
-      if(Array.isArray(v)||typeof v==='object') walk(v,hint,depth+1);
+      const kh=k.toLowerCase(); let next=hint;
+      if(kh.includes('short')) next='short';
+      if(kh.includes('long')) next='long';
+      if(kh.includes('liq')||kh.includes('cluster')||kh.includes('level')||kh.includes('bucket')||kh.includes('heatmap')||typeof v==='object') walk(v,next,depth+1);
     }
   };
   walk(raw);
-  // deduplicate; infer side from spot when absent
-  const spot=state.latestPrice || state.ctxByCoin.get(state.asset.symbol)?.markPx;
-  const m=new Map();
+
+  const merged=new Map();
   for(const x of levels){
+    if(!Number.isFinite(x.price)||!Number.isFinite(x.notional)||x.notional<=0) continue;
     if(!x.side && Number.isFinite(spot)) x.side=x.price>spot?'short':'long';
-    const key=`${x.side}:${x.price.toFixed(6)}`; const prev=m.get(key); if(!prev||x.notional>prev.notional)m.set(key,x);
+    if(x.side!=='long'&&x.side!=='short') continue;
+    const key=`${x.side}:${x.price.toFixed(8)}`;
+    const prev=merged.get(key);
+    if(!prev || x.notional>prev.notional) merged.set(key,x);
   }
-  const ts=Number(raw?.timestamp ?? raw?.updatedAt ?? raw?.updated_at ?? raw?.time) || Date.now();
-  return {levels:[...m.values()],timestamp:ts<1e12?ts*1000:ts,raw};
+  const tsRaw=Number(raw?.timestamp ?? raw?.updatedAt ?? raw?.updated_at ?? raw?.time ?? raw?.generated_at ?? raw?.generatedAt);
+  const ts=Number.isFinite(tsRaw)?(tsRaw<1e12?tsRaw*1000:tsRaw):Date.now();
+  return {levels:[...merged.values()],timestamp:ts,raw};
+}
+
+function selectVisibleLevels(){
+  const spot=state.latestPrice || state.ctxByCoin.get(state.asset.symbol)?.markPx;
+  const lv=state.heatmap?.levels||[];
+  if(!Number.isFinite(spot)) return {spot,above:[],below:[]};
+  const below=lv.filter(x=>x.side==='long'&&x.price<spot).sort((a,b)=>b.price-a.price).slice(0,8);
+  const above=lv.filter(x=>x.side==='short'&&x.price>spot).sort((a,b)=>a.price-b.price).slice(0,8);
+  return {spot,above,below};
 }
 
 function renderHeatmap(){
-  const host=$('heatmap'), note=$('heatmapNotice'); host.textContent=''; note.classList.add('hidden');
+  const host=$('heatmap'), note=$('heatmapNotice'), summary=$('clusterSummary');
+  host.textContent=''; note.classList.add('hidden'); summary.classList.add('hidden'); summary.textContent='';
   if(!state.asset.heatmap){
-    note.textContent=`${state.asset.symbol}の実ポジション清算マップはV0.1では未対応。価格・OI・Funding・取引フローはリアルタイム表示します。`;
-    note.classList.remove('hidden'); $('heatmapAge').textContent='未対応'; return;
+    note.textContent=`${state.asset.symbol}の実ポジション清算マップは現在未対応。価格・OI・Funding・Takerフローはリアルタイムです。`;
+    note.classList.remove('hidden'); setText('heatmapAge','未対応'); return;
   }
   if(!state.heatmap?.levels?.length){
-    note.textContent='清算データ取得待ち。HyperPerps公開APIがSafariから直接取得できない場合は、次版でCloudflareの軽量プロキシを追加します。';
-    note.classList.remove('hidden'); $('heatmapAge').textContent='取得待ち'; return;
+    note.textContent='清算データを取得できませんでした。Direct → 2つの公開フォールバック経路を自動試行します。しばらくして更新してください。';
+    note.classList.remove('hidden'); setText('heatmapAge','取得待ち'); return;
   }
-  const spot=state.latestPrice || state.ctxByCoin.get(state.asset.symbol)?.markPx;
-  const lv=state.heatmap.levels.filter(x=>x.side==='long'||x.side==='short');
-  const below=lv.filter(x=>x.side==='long').sort((a,b)=>b.price-a.price).slice(0,8);
-  const above=lv.filter(x=>x.side==='short').sort((a,b)=>a.price-b.price).slice(0,8);
+  const {spot,above,below}=selectVisibleLevels();
+  if(!above.length&&!below.length){
+    note.textContent='清算データ形式は取得できましたが、現在値の上下に有効なクラスターを認識できません。'; note.classList.remove('hidden'); return;
+  }
   const max=Math.max(1,...below.map(x=>x.notional),...above.map(x=>x.notional));
   const addRows=(arr,side)=>arr.forEach(x=>{
+    const d=distPct(x.price,spot);
     const row=document.createElement('div'); row.className='liq-row';
-    row.innerHTML=`<div class="liq-price">${priceFmt(x.price)}</div><div class="liq-track"><div class="liq-fill ${side}" style="width:${clamp(x.notional/max*100,2,100)}%"></div></div><div class="liq-value ${side==='short'?'green':'red'}">${money(x.notional)}</div>`;
+    row.innerHTML=`<div class="liq-price"><b>${priceFmt(x.price)}</b><small>${Number.isFinite(d)?(d*100).toFixed(2)+'%':''}</small></div><div class="liq-track"><div class="liq-fill ${side}" style="width:${clamp(x.notional/max*100,2,100)}%"></div></div><div class="liq-value ${side==='short'?'green':'red'}">${money(x.notional)}</div>`;
     host.appendChild(row);
   });
   addRows(above,'short');
   const cur=document.createElement('div'); cur.className='current-line'; cur.textContent=`現在 ${priceFmt(spot)}`; host.appendChild(cur);
   addRows(below,'long');
-  const age=Math.max(0,Date.now()-state.heatmap.timestamp); $('heatmapAge').textContent=age<120000?'LIVE':`${Math.round(age/60000)}分前`;
+
+  const topShort=[...above].sort((a,b)=>b.notional-a.notional)[0];
+  const topLong=[...below].sort((a,b)=>b.notional-a.notional)[0];
+  if(topShort||topLong){
+    summary.innerHTML=`<div><span>上側最大</span><b class="green">${topShort?`${priceFmt(topShort.price)} · ${money(topShort.notional)}`:'—'}</b></div><div><span>下側最大</span><b class="red">${topLong?`${priceFmt(topLong.price)} · ${money(topLong.notional)}`:'—'}</b></div>`;
+    summary.classList.remove('hidden');
+  }
+
+  const age=Math.max(0,Date.now()-state.heatmap.timestamp);
+  setText('heatmapAge',age<120000?'LIVE':`${Math.round(age/60000)}分前`);
+}
+
+function liquidationBias(){
+  const spot=state.latestPrice || state.ctxByCoin.get(state.asset.symbol)?.markPx;
+  const lv=state.heatmap?.levels||[];
+  if(!Number.isFinite(spot)||!lv.length) return null;
+  let short=0,long=0;
+  for(const x of lv){
+    const d=Math.abs(x.price-spot)/spot;
+    if(d>CONFIG.liqBiasRangePct) continue;
+    const w=Math.exp(-d*22);
+    if(x.side==='short'&&x.price>spot) short+=x.notional*w;
+    if(x.side==='long'&&x.price<spot) long+=x.notional*w;
+  }
+  const total=short+long;
+  return total?{short,long,total,shortPct:short/total,longPct:long/total}:null;
+}
+function renderLiqBias(){
+  const b=liquidationBias();
+  if(!b){ setText('shortLiqPct','—'); setText('longLiqPct','—'); $('shortLiqBar').style.width='50%'; $('longLiqBar').style.width='50%'; return; }
+  setText('shortLiqPct',(b.shortPct*100).toFixed(1)+'%'); setText('longLiqPct',(b.longPct*100).toFixed(1)+'%');
+  $('shortLiqBar').style.width=(b.shortPct*100)+'%'; $('longLiqBar').style.width=(b.longPct*100)+'%';
 }
 
 function renderPressure(){
   const f=flowTotals(); const flow=f.total?f.buy/f.total:0.5;
   const funding=state.ctxByCoin.get(state.asset.symbol)?.funding || 0;
-  let up=50+(flow-.5)*45, down=50-(flow-.5)*45;
-  const lv=state.heatmap?.levels||[], spot=state.latestPrice;
-  if(Number.isFinite(spot)&&lv.length){
-    let s=0,l=0;
-    for(const x of lv){const dist=Math.abs(x.price-spot)/spot; const w=Math.exp(-dist*18); if(x.side==='short')s+=x.notional*w; if(x.side==='long')l+=x.notional*w;}
-    const tot=s+l; if(tot){const skew=(s-l)/tot; up+=skew*30; down-=skew*30;}
-  }
-  // Positive funding mildly penalizes upside squeeze and increases long-cascade vulnerability.
+  let up=50+(flow-.5)*30, down=50-(flow-.5)*30;
+  const b=liquidationBias();
+  if(b){ const skew=b.shortPct-b.longPct; up+=skew*32; down-=skew*32; }
   const fAdj=clamp(funding*12000,-10,10); up-=fAdj; down+=fAdj;
-  $('upScore').textContent=Math.round(clamp(up,0,100))+'/100'; $('downScore').textContent=Math.round(clamp(down,0,100))+'/100';
+  setText('upScore',Math.round(clamp(up,0,100))+'/100'); setText('downScore',Math.round(clamp(down,0,100))+'/100');
 }
 
 function setupTimers(){
@@ -255,19 +346,26 @@ function setupTimers(){
   state.timers.push(setInterval(fetchMeta,CONFIG.infoPollMs));
   state.timers.push(setInterval(fetchHeatmap,CONFIG.heatmapPollMs));
   state.timers.push(setInterval(()=>{
+    state.tradeEvents=state.tradeEvents.filter(x=>x.ts>=Date.now()-CONFIG.maxTradeWindowMs);
     renderFlow(); renderPressure();
-    if(Date.now()-state.lastWsAt>CONFIG.wsStaleMs && state.ws?.readyState===1){try{state.ws.close();}catch{}}
+    if(Date.now()-state.lastWsAt>CONFIG.wsStaleMs && state.ws?.readyState===1){ try{state.ws.close();}catch{} }
   },5000));
 }
 
 $('refreshBtn').addEventListener('click',()=>Promise.allSettled([fetchMeta(),fetchHeatmap()]));
+$('flowWindow').addEventListener('change',(e)=>{ state.flowWindowMs=Number(e.target.value)||300000; renderFlow(); renderPressure(); });
 window.addEventListener('online',()=>{connectWs(true); fetchMeta(); fetchHeatmap();});
 window.addEventListener('offline',()=>setStatus('error','OFFLINE'));
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){connectWs(); fetchMeta(); fetchHeatmap();}});
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'){ connectWs(); fetchMeta(); fetchHeatmap(); } });
 
 (async function init(){
-  renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap();
+  renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias();
   connectWs(); setupTimers();
   await Promise.allSettled([fetchMeta(),fetchHeatmap()]);
-  if('serviceWorker' in navigator){ navigator.serviceWorker.register('./sw.js').catch(console.warn); }
+  if('serviceWorker' in navigator){
+    try{
+      const reg=await navigator.serviceWorker.register('./sw.js');
+      reg.update().catch(()=>{});
+    }catch(err){ console.warn('service worker',err); }
+  }
 })();
