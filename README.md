@@ -1,101 +1,13 @@
-# LiqPulse v0.8.0
+# LiqPulse v0.9.0
 
-BTC / ETH / SOL / XRP / ZEC を同一UI・同一分析パイプラインで扱うリアルタイム先物モニターです。
+BTC / ETH / SOL / XRP / ZEC に加え、trade.xyz の HIP-3 市場 `SP500` / `GOLD` / `SILVER` を追加。
 
-## v0.8.0
+## v0.9.0
+- ZECを含む全銘柄でHyperliquid L2板を取得
+- 実清算データがない場合はL2板から「推定上側/下側反応帯」を表示（実清算ラインとは別物として明記）
+- S&P 500 (`xyz:SP500`)、金 (`xyz:GOLD`)、銀 (`xyz:SILVER`) の価格 / OI / Funding / Takerフロー / AI Quick View / Market Biasを追加
+- HIP-3はHyperliquid `metaAndAssetCtxs` の `dex: xyz` と prefixed coin を使用
+- Workerに `/book/:symbol` を追加
+- AIスコアにL2板の買い/売り厚みを補助入力として追加
 
-- BTC / ETH / SOL / XRP / ZEC を全面対応対象へ統一
-- 全5銘柄で価格、Mark、OI、Funding、Taker Buy/Sell、Long/Short Positioning、Market Bias Engine、AI Quick Viewを有効化
-- 清算クラスターも全5銘柄で実データ取得を試行
-- XRP / ZECを含め、上流のHyperPerps公開heatmapが返る場合はBTCと同じ清算Radar・クラスター・一次トリガー・最大クラスターを表示
-- 上流が対象銘柄の清算実データを提供しない場合、推定値を捏造せず「実清算データ未取得」と明示し、その他のリアルタイム分析は継続
-- ZECもBybit Linearの公開5分Long/Short比率フォールバック対象
-- Worker `/capabilities` を追加し、対応対象を確認可能
-- Worker `/health` は `0.8.0`
-
-## データの意味
-
-清算ラインは公開ソースで取得できた実ポジション由来データのみを表示します。取得できない銘柄に仮想の清算価格を作ることはしません。AI Quick Viewは清算データがない場合でも、Taker、L/S、Funding、OI、価格変化を使って方向判定を継続します。
-
-
-## Previous notes
-
-iPhone Safari/PWA向けの分析専用リアルタイム先物モニターです。注文機能はありません。
-
-## v0.3
-- Hyperliquid WebSocket: 価格 / Tradesをリアルタイム表示
-- Hyperliquid Info API: Mark / OI / Funding
-- BTC / ETH / SOL: HyperPerpsの実ポジション由来清算クラスター対応
-- iOS SafariのCORS制約対策としてCloudflare Worker Relayを正式対応
-- Relay URLはアプリ内で保存・接続テスト可能（localStorage）
-- Service Workerキャッシュ v0.3.0
-
-## Relay
-`relay-worker.js` をCloudflare Workersにデプロイし、発行された `https://xxxxx.workers.dev` をアプリの「清算データ Relay」に貼り付けます。
-
-RelayはBTC/ETH/SOLの公開清算APIのみを中継し、APIキー・Cookie・ユーザーデータは扱いません。
-
-
-## v0.4.0 GitHub → Cloudflare Workers 自動デプロイ
-
-`worker/` をCloudflare Worker専用ルートとして追加しました。
-
-- Worker root directory: `worker`
-- Wrangler config: `worker/wrangler.jsonc`
-- Worker name: `liqpulse-relay`
-- Deploy command: `npx wrangler deploy`（Cloudflare既定）
-- GitHub `main` 更新時に自動デプロイ可能
-- LiqPulse本体には標準Relay URLをプリセット
-
-Cloudflareで既存Worker `liqpulse-relay` → Settings → Builds → Connect からGitHubリポジトリを接続し、Root directoryを `worker` に設定してください。
-
-
-## v0.4.0
-- Liquidation Radar（最寄り上下トリガー、±5%清算総額）
-- 15分の清算クラスター増減をiPhone内ローカル履歴から計算
-- 現在価格を中心に、上側ショート清算→現在値→下側ロング清算で表示
-- 一次トリガー / 上値の壁 / 主要クラスターの自動ラベル
-- 表示段数 5 / 8 / 12 切替
-
-
-## v0.5.0
-- Binance USDⓈ-M公開統計をCloudflare Relay経由で取得
-- 全口座 Account Long/Short Ratio
-- Top Trader Account Long/Short Ratio
-- Top Trader Position Long/Short Ratio
-- BTC / ETH / SOL / XRP / ZECで取得を試行し、未上場・API制限時は安全に「取得失敗」表示
-- PressureにはPosition Ratioを小さな補助要素として追加（方向予測ではない）
-- ETH / SOLはBTCと同じLiquidation Radar / 清算クラスター表示を継続
-
-Long/Short統計はBinance USDⓈ-Mの公開市場統計であり、Hyperliquid全体の建玉比率ではありません。
-
-
-## v0.7.0
-
-- Long/Short Positioning: BinanceをPrimary、Bybit Linearを全口座比率のFallbackとして追加。
-- BinanceがCloudflare経由で拒否された場合でもBybit `GET /v5/market/account-ratio` の5分統計を利用。
-- データソースを画面下に明示し、Top Traderが取得できない場合は欠損を明示。
-
-## v0.7.0 deployment hardening
-
-- `relay-worker.js` is the canonical Cloudflare Worker entry point.
-- `index.js` contains the same Worker source as a non-empty backup.
-- `wrangler.jsonc` points directly to `relay-worker.js`.
-- The duplicate `worker/` folder was removed to avoid iPhone/GitHub upload name collisions.
-
-
-## v0.7.0
-- Market Bias Engine: liquidation / taker / public L-S / funding / OI momentum composite
-- 15-minute OI and price momentum stored locally on the iPhone
-- Data-confidence indicator and concise reason list
-- Clearer handling when Binance Top Trader data is unavailable
-- No order execution; analysis-only
-
-
-## v0.7.0
-- 画面上部に AI Quick View を追加
-- LONG/SHORTどちらが優勢かを一目で表示
-- AI判断は LONG候補 / SHORT候補 / 見送り の3段階（低信頼度は見送り）
-- 最寄りショート清算ライン / ロング清算ラインを上部に表示
-- 詳細 Market Bias Engine は下段へ移動
-- 極端なTakerフローや15分急変を簡易警戒表示
+分析専用。推定反応帯は清算価格・利確価格・損切り価格を直接観測したものではありません。

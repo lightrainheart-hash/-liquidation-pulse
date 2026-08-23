@@ -1,8 +1,10 @@
-// LiqPulse v0.8.0 — Cloudflare Worker relay
+// LiqPulse v0.9.0 — Cloudflare Worker relay
 // Public market data only. No API keys, cookies, or user data are forwarded.
 
 const ALLOWED_HEATMAP_SYMBOLS = new Set(['BTC', 'ETH', 'SOL', 'XRP', 'ZEC']);
 const ALLOWED_POSITIONING_SYMBOLS = new Set(['BTC', 'ETH', 'SOL', 'XRP', 'ZEC']);
+const BOOK_COINS = { BTC:'BTC', ETH:'ETH', SOL:'SOL', XRP:'XRP', ZEC:'ZEC', SP500:'xyz:SP500', GOLD:'xyz:GOLD', SILVER:'xyz:SILVER' };
+const HYPERLIQUID_INFO='https://api.hyperliquid.xyz/info';
 const HEATMAP_UPSTREAM = 'https://trade.hyperperps.app/api/public/heatmap/';
 const BINANCE_FUTURES_DATA = 'https://fapi.binance.com/futures/data/';
 const BYBIT_V5 = 'https://api.bybit.com/v5/market/account-ratio';
@@ -135,15 +137,17 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === '/health') {
-      return Response.json({ ok: true, service: 'liqpulse-relay', version: '0.8.0' }, { headers });
+      return Response.json({ ok: true, service: 'liqpulse-relay', version: '0.9.0' }, { headers });
     }
 
     if (url.pathname === '/capabilities') {
       return Response.json({
-        version: '0.8.0',
-        market: ['BTC','ETH','SOL','XRP','ZEC'],
+        version: '0.9.0',
+        market: ['BTC','ETH','SOL','XRP','ZEC','SP500','GOLD','SILVER'],
         heatmap: ['BTC','ETH','SOL','XRP','ZEC'],
         positioning: ['BTC','ETH','SOL','XRP','ZEC'],
+        orderBook: ['BTC','ETH','SOL','XRP','ZEC','SP500','GOLD','SILVER'],
+        hip3: ['xyz:SP500','xyz:GOLD','xyz:SILVER'],
         note: 'Heatmap availability depends on the upstream public source for each symbol.'
       }, { headers });
     }
@@ -167,6 +171,18 @@ export default {
       } catch (error) {
         return Response.json({ error: 'upstream_fetch_failed', message: String(error?.message || error) }, { status: 502, headers });
       }
+    }
+
+    const bookMatch = url.pathname.match(/^\/book\/([A-Za-z0-9_-]+)$/);
+    if (bookMatch) {
+      const symbol=bookMatch[1].toUpperCase(), coin=BOOK_COINS[symbol];
+      if(!coin) return Response.json({error:'unsupported_symbol'}, {status:400,headers});
+      try{
+        const upstream=await fetch(HYPERLIQUID_INFO,{method:'POST',headers:{'content-type':'application/json','accept':'application/json'},body:JSON.stringify({type:'l2Book',coin,nSigFigs:5})});
+        const text=await upstream.text();
+        const outHeaders=new Headers(headers); outHeaders.set('Content-Type','application/json; charset=utf-8'); outHeaders.set('Cache-Control','public, max-age=5');
+        return new Response(text,{status:upstream.status,headers:outHeaders});
+      }catch(error){ return Response.json({error:'book_upstream_failed',message:String(error?.message||error)},{status:502,headers}); }
     }
 
     const positioningMatch = url.pathname.match(/^\/positioning\/([A-Za-z0-9_-]+)$/);

@@ -10,13 +10,13 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="apple-touch-icon" href="./icon-180.png" />
   <link rel="stylesheet" href="./styles.css" />
-  <title>LiqPulse v0.8.0</title>
+  <title>LiqPulse v0.9.0</title>
 </head>
 <body>
   <main class="app-shell">
     <header class="topbar">
       <div>
-        <div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v0.8.0</span></div>
+        <div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v0.9.0</span></div>
         <h1>LiqPulse</h1>
       </div>
       <div id="connBadge" class="status offline"><span></span><b>接続中</b></div>
@@ -62,12 +62,12 @@
       <div class="quick-liq-title">直近の清算ライン</div>
       <div class="quick-liq-grid">
         <div class="quick-liq up">
-          <span>↑ ショート清算ライン</span>
+          <span>↑ ショート清算 / 上側トリガー</span>
           <b id="quickShortLine">—</b>
           <small id="quickShortLineMeta">上昇時のショート清算候補</small>
         </div>
         <div class="quick-liq down">
-          <span>↓ ロング清算ライン</span>
+          <span>↓ ロング清算 / 下側トリガー</span>
           <b id="quickLongLine">—</b>
           <small id="quickLongLineMeta">下落時のロング清算候補</small>
         </div>
@@ -86,22 +86,22 @@
       </div>
       <div class="radar-grid">
         <div class="radar-box up">
-          <span>↑ 最寄りショート清算</span>
+          <span id="nearestShortLabel">↑ 最寄りショート清算</span>
           <b id="nearestShort">—</b>
           <small id="nearestShortMeta">—</small>
         </div>
         <div class="radar-box down">
-          <span>↓ 最寄りロング清算</span>
+          <span id="nearestLongLabel">↓ 最寄りロング清算</span>
           <b id="nearestLong">—</b>
           <small id="nearestLongMeta">—</small>
         </div>
         <div class="radar-box">
-          <span>上側清算総額 ±5%</span>
+          <span id="short5Label">上側清算総額 ±5%</span>
           <b id="short5Total" class="green">—</b>
           <small id="shortMomentum">15分変化 —</small>
         </div>
         <div class="radar-box">
-          <span>下側清算総額 ±5%</span>
+          <span id="long5Label">下側清算総額 ±5%</span>
           <b id="long5Total" class="red">—</b>
           <small id="longMomentum">15分変化 —</small>
         </div>
@@ -113,7 +113,7 @@
       <div class="section-head">
         <div>
           <div class="card-title">清算クラスター</div>
-          <div class="subtitle">実ポジション由来 / BTC・ETH・SOL・XRP・ZEC</div>
+          <div class="subtitle">実清算データ + L2推定ゾーン / BTC・ETH・SOL・XRP・ZEC・SP500・GOLD・SILVER</div>
         </div>
         <div class="head-actions"><select id="clusterDepth" class="select-pill" aria-label="表示件数"><option value="5">5段</option><option value="8" selected>8段</option><option value="12">12段</option></select><span id="heatmapAge" class="pill">—</span></div>
       </div>
@@ -245,11 +245,12 @@
         <li><span>清算マップ</span><b id="statusHeatmap">取得待ち</b></li>
         <li><span>清算データ経路</span><b id="statusHeatmapRoute">—</b></li>
         <li><span>Long / Short統計</span><b id="statusPositioning">取得待ち</b></li>
+        <li><span>L2板 / 推定反応帯</span><b id="statusOrderBook">取得待ち</b></li>
       </ul>
     </section>
 
     <footer>
-      分析専用・注文機能なし。清算クラスターは価格到達を保証しません。Long/Short統計はBinance/Bybitの公開統計で、Hyperliquid建玉比率ではありません。BTC/ETH/SOL清算データはHyperPerps公開APIをRelay経由で取得できます。
+      分析専用・注文機能なし。清算クラスターは価格到達を保証しません。Long/Short統計はBinance/Bybitの公開統計で、Hyperliquid建玉比率ではありません。実清算データがない銘柄ではHyperliquid L2板から推定反応帯を表示し、実清算ラインとは明確に区別します。SP500/GOLD/SILVERはtrade.xyz(HIP-3)市場データを利用します。
     </footer>
   </main>
   <script src="./app.js?v=0.8.0" defer></script>

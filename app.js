@@ -11,6 +11,7 @@ const CONFIG = {
   infoPollMs: 15000,
   heatmapPollMs: 60000,
   positioningPollMs: 60000,
+  orderBookPollMs: 15000,
   relayTimeoutMs: 10000,
   maxTradeWindowMs: 60 * 60 * 1000,
   wsStaleMs: 15000,
@@ -22,11 +23,14 @@ const CONFIG = {
 };
 
 const ASSETS = [
-  { symbol:'BTC', name:'Bitcoin', heatmap:true, positioning:true },
-  { symbol:'ETH', name:'Ethereum', heatmap:true, positioning:true },
-  { symbol:'SOL', name:'Solana', heatmap:true, positioning:true },
-  { symbol:'XRP', name:'XRP', heatmap:true, positioning:true },
-  { symbol:'ZEC', name:'Zcash', heatmap:true, positioning:true },
+  { symbol:'BTC', name:'Bitcoin', heatmap:true, positioning:true, dex:'', apiCoin:'BTC', estimatedZones:true },
+  { symbol:'ETH', name:'Ethereum', heatmap:true, positioning:true, dex:'', apiCoin:'ETH', estimatedZones:true },
+  { symbol:'SOL', name:'Solana', heatmap:true, positioning:true, dex:'', apiCoin:'SOL', estimatedZones:true },
+  { symbol:'XRP', name:'XRP', heatmap:true, positioning:true, dex:'', apiCoin:'XRP', estimatedZones:true },
+  { symbol:'ZEC', name:'Zcash', heatmap:true, positioning:true, dex:'', apiCoin:'ZEC', estimatedZones:true },
+  { symbol:'SP500', name:'S&P 500', heatmap:false, positioning:false, dex:'xyz', apiCoin:'xyz:SP500', estimatedZones:true },
+  { symbol:'GOLD', name:'Gold', heatmap:false, positioning:false, dex:'xyz', apiCoin:'xyz:GOLD', estimatedZones:true },
+  { symbol:'SILVER', name:'Silver', heatmap:false, positioning:false, dex:'xyz', apiCoin:'xyz:SILVER', estimatedZones:true },
 ];
 
 const state = {
@@ -40,6 +44,7 @@ const state = {
   latestPrice:null,
   heatmap:null,
   positioning:null,
+  orderbook:null,
   timers:[],
   switching:false,
   lastWsAt:0,
@@ -82,10 +87,10 @@ async function switchAsset(symbol){
   if(state.switching || symbol===state.asset.symbol) return;
   state.switching=true;
   state.asset=ASSETS.find(x=>x.symbol===symbol)||ASSETS[0];
-  state.tradeEvents=[]; state.heatmap=null; state.positioning=null; state.latestPrice=null;
+  state.tradeEvents=[]; state.heatmap=null; state.positioning=null; state.orderbook=null; state.latestPrice=null;
   renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderQuickView(); renderRelaySettings();
   connectWs(true);
-  await Promise.allSettled([fetchMeta(), fetchHeatmap(), fetchPositioning()]);
+  await Promise.allSettled([fetchMeta(), fetchHeatmap(), fetchPositioning(), fetchOrderBook()]);
   state.switching=false;
 }
 
@@ -131,7 +136,8 @@ function marketMomentum(){
 
 async function fetchMeta(){
   try{
-    const res=await fetch(CONFIG.infoUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({type:'metaAndAssetCtxs'}),cache:'no-store'});
+    const req={type:'metaAndAssetCtxs'}; if(state.asset.dex) req.dex=state.asset.dex;
+    const res=await fetch(CONFIG.infoUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(req),cache:'no-store'});
     if(!res.ok) throw new Error(`HTTP ${res.status}`);
     const data=await res.json();
     const meta=data?.[0], ctxs=data?.[1];
@@ -158,8 +164,8 @@ function connectWs(force=false){
   const ws=new WebSocket(CONFIG.wsUrl); state.ws=ws;
   ws.onopen=()=>{
     state.wsBackoff=1000; state.lastWsAt=Date.now(); setStatus('online','LIVE'); setText('statusWs','LIVE');
-    ws.send(JSON.stringify({method:'subscribe',subscription:{type:'trades',coin:state.asset.symbol}}));
-    ws.send(JSON.stringify({method:'subscribe',subscription:{type:'allMids'}}));
+    ws.send(JSON.stringify({method:'subscribe',subscription:{type:'trades',coin:state.asset.apiCoin||state.asset.symbol}}));
+    if(!state.asset.dex) ws.send(JSON.stringify({method:'subscribe',subscription:{type:'allMids'}}));
   };
   ws.onmessage=(ev)=>{
     state.lastWsAt=Date.now();
@@ -213,6 +219,56 @@ async function fetchJsonWithTimeout(url,timeoutMs=10000){
     const text=await res.text();
     return JSON.parse(text);
   }finally{ clearTimeout(timer); }
+}
+
+
+async function postInfoJson(body,timeoutMs=10000){
+  const ac=new AbortController(); const timer=setTimeout(()=>ac.abort(),timeoutMs);
+  try{
+    const res=await fetch(CONFIG.infoUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),cache:'no-store',signal:ac.signal});
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  }finally{ clearTimeout(timer); }
+}
+function normalizeOrderBook(raw){
+  const levels=raw?.levels;
+  if(!Array.isArray(levels)||levels.length<2) return null;
+  const conv=(arr,side)=>(Array.isArray(arr)?arr:[]).map(x=>{
+    const price=Number(x?.px), size=Number(x?.sz), n=Number(x?.n);
+    return {price,size,notional:Number.isFinite(price)&&Number.isFinite(size)?price*size:NaN,n:Number.isFinite(n)?n:null,side};
+  }).filter(x=>Number.isFinite(x.price)&&Number.isFinite(x.notional)&&x.notional>0);
+  return {bids:conv(levels[0],'bid'),asks:conv(levels[1],'ask'),timestamp:Number(raw?.time)||Date.now(),coin:raw?.coin||state.asset.apiCoin};
+}
+async function fetchOrderBook(){
+  if(!state.asset.estimatedZones){ state.orderbook=null; renderQuickView(); return; }
+  const relayBase=(CONFIG.relayBase||'').replace(/\/$/,'');
+  let raw=null,err=null;
+  if(relayBase){
+    try{ raw=await fetchJsonWithTimeout(`${relayBase}/book/${encodeURIComponent(state.asset.symbol)}`,CONFIG.relayTimeoutMs); }catch(e){err=e;}
+  }
+  if(!raw){
+    try{ raw=await postInfoJson({type:'l2Book',coin:state.asset.apiCoin||state.asset.symbol,nSigFigs:5}); }catch(e){err=e;}
+  }
+  const ob=normalizeOrderBook(raw);
+  state.orderbook=ob;
+  setText('statusOrderBook',ob?'正常':'取得失敗');
+  if(!ob) console.warn('orderbook',err);
+  renderQuickView(); renderDecisionEngine();
+}
+function estimatedTriggerZones(){
+  const ob=state.orderbook, spot=state.latestPrice||state.ctxByCoin.get(state.asset.symbol)?.markPx;
+  if(!ob||!Number.isFinite(spot)) return null;
+  const choose=(rows,dir)=>{
+    const filtered=rows.filter(x=>{const d=(x.price/spot)-1; return dir==='up'?(d>0&&d<=0.05):(d<0&&d>=-0.05);});
+    if(!filtered.length) return null;
+    // Emphasize large nearby walls without pretending they are liquidation levels.
+    return filtered.map(x=>{const d=Math.abs((x.price/spot)-1);return {...x,distance:d,score:x.notional/Math.max(d,0.0005)};})
+      .sort((a,b)=>b.score-a.score)[0];
+  };
+  const up=choose(ob.asks,'up'), down=choose(ob.bids,'down');
+  const bidTotal=ob.bids.slice(0,10).reduce((a,x)=>a+x.notional,0), askTotal=ob.asks.slice(0,10).reduce((a,x)=>a+x.notional,0);
+  const total=bidTotal+askTotal;
+  return {up,down,bidTotal,askTotal,bidPct:total?bidTotal/total:.5,askPct:total?askTotal/total:.5};
 }
 
 async function fetchHeatmap(){
@@ -388,24 +444,38 @@ function fmtMomentum(v){
 }
 function renderRadar(){
   const r=radarMetrics();
-  if(!r){
-    ['nearestShort','nearestLong','short5Total','long5Total'].forEach(id=>setText(id,'—'));
-    setText('nearestShortMeta','—');setText('nearestLongMeta','—');setText('shortMomentum','15分変化 —');setText('longMomentum','15分変化 —');setText('radarBiasBadge','分析待ち');setText('radarReason','清算データ取得後に表示します。');return;
+  if(r){
+    setText('nearestShortLabel','↑ 最寄りショート清算'); setText('nearestLongLabel','↓ 最寄りロング清算');
+    setText('short5Label','上側清算総額 ±5%'); setText('long5Label','下側清算総額 ±5%');
+    const ns=r.nearestShort,nl=r.nearestLong;
+    setText('nearestShort',ns?priceFmt(ns.price):'—');
+    setText('nearestShortMeta',ns?`${(distPct(ns.price,r.spot)*100).toFixed(2)}% · ${money(ns.notional)}${ns.walletCount?` · ${ns.walletCount} wallets`:''}`:'—');
+    setText('nearestLong',nl?priceFmt(nl.price):'—');
+    setText('nearestLongMeta',nl?`${Math.abs(distPct(nl.price,r.spot)*100).toFixed(2)}% · ${money(nl.notional)}${nl.walletCount?` · ${nl.walletCount} wallets`:''}`:'—');
+    setText('short5Total',money(r.totals.short)); setText('long5Total',money(r.totals.long));
+    setText('shortMomentum',fmtMomentum(r.shortMomentum)); setText('longMomentum',fmtMomentum(r.longMomentum));
+    const total=r.totals.short+r.totals.long; const shortPct=total?r.totals.short/total:.5;
+    let badge='均衡', reason='±5%の清算想定額はおおむね均衡しています。';
+    if(shortPct>=.62){badge='上側優勢';reason=`上側ショート清算が±5%内の${(shortPct*100).toFixed(0)}%を占めています。上抜け時のスクイーズ燃料が相対的に大きい状態です。`;}
+    else if(shortPct<=.38){badge='下側優勢';reason=`下側ロング清算が±5%内の${((1-shortPct)*100).toFixed(0)}%を占めています。下抜け時のカスケード燃料が相対的に大きい状態です。`;}
+    setText('radarBiasBadge',badge); setText('radarReason',reason); return;
   }
-  const ns=r.nearestShort,nl=r.nearestLong;
-  setText('nearestShort',ns?priceFmt(ns.price):'—');
-  setText('nearestShortMeta',ns?`${(distPct(ns.price,r.spot)*100).toFixed(2)}% · ${money(ns.notional)}${ns.walletCount?` · ${ns.walletCount} wallets`:''}`:'—');
-  setText('nearestLong',nl?priceFmt(nl.price):'—');
-  setText('nearestLongMeta',nl?`${Math.abs(distPct(nl.price,r.spot)*100).toFixed(2)}% · ${money(nl.notional)}${nl.walletCount?` · ${nl.walletCount} wallets`:''}`:'—');
-  setText('short5Total',money(r.totals.short)); setText('long5Total',money(r.totals.long));
-  setText('shortMomentum',fmtMomentum(r.shortMomentum)); setText('longMomentum',fmtMomentum(r.longMomentum));
-  const total=r.totals.short+r.totals.long; const shortPct=total?r.totals.short/total:.5;
-  let badge='均衡', reason='±5%の清算想定額はおおむね均衡しています。';
-  if(shortPct>=.62){badge='上側優勢';reason=`上側ショート清算が±5%内の${(shortPct*100).toFixed(0)}%を占めています。上抜け時のスクイーズ燃料が相対的に大きい状態です。`;}
-  else if(shortPct<=.38){badge='下側優勢';reason=`下側ロング清算が±5%内の${((1-shortPct)*100).toFixed(0)}%を占めています。下抜け時のカスケード燃料が相対的に大きい状態です。`;}
-  setText('radarBiasBadge',badge); setText('radarReason',reason);
+  const ez=estimatedTriggerZones();
+  if(ez){
+    setText('nearestShortLabel','↑ 推定上側反応帯'); setText('nearestLongLabel','↓ 推定下側反応帯');
+    setText('short5Label','売り板厚 上位10'); setText('long5Label','買い板厚 上位10');
+    setText('nearestShort',ez.up?priceFmt(ez.up.price):'—'); setText('nearestLong',ez.down?priceFmt(ez.down.price):'—');
+    setText('nearestShortMeta',ez.up?`+${(ez.up.distance*100).toFixed(2)}% · 板 ${money(ez.up.notional)}`:'—');
+    setText('nearestLongMeta',ez.down?`-${(ez.down.distance*100).toFixed(2)}% · 板 ${money(ez.down.notional)}`:'—');
+    setText('short5Total',money(ez.askTotal)); setText('long5Total',money(ez.bidTotal));
+    setText('shortMomentum','実清算ではありません'); setText('longMomentum','実清算ではありません');
+    const side=ez.bidPct>=.58?'買い板優勢':ez.askPct>=.58?'売り板優勢':'板均衡';
+    setText('radarBiasBadge','L2推定');
+    setText('radarReason',`${side}。実清算データがないため、HyperliquidのL2板から近い大口反応帯を推定表示しています。清算価格・利確価格を直接観測したものではありません。`); return;
+  }
+  ['nearestShort','nearestLong','short5Total','long5Total'].forEach(id=>setText(id,'—'));
+  setText('nearestShortMeta','—');setText('nearestLongMeta','—');setText('shortMomentum','—');setText('longMomentum','—');setText('radarBiasBadge','分析待ち');setText('radarReason','清算またはL2板データ取得後に表示します。');
 }
-
 function selectVisibleLevels(){
   const spot=state.latestPrice || state.ctxByCoin.get(state.asset.symbol)?.markPx;
   const lv=state.heatmap?.levels||[];
@@ -575,6 +645,11 @@ function decisionMetrics(){
     if(mm.oiChange>0){ up += Math.sign(mm.priceChange||0)*6*oiStrength; }
     weight+=10; used.push('OI変化');
   }
+  const ez=estimatedTriggerZones();
+  if(ez){
+    // More bid depth supports downside absorption; more ask depth supports upside resistance.
+    up += (ez.bidPct-.5)*16; weight+=15; used.push('L2板');
+  }
   if(radar?.nearestShort && radar?.nearestLong){
     const su=Math.abs(distPct(radar.nearestShort.price,radar.spot));
     const ld=Math.abs(distPct(radar.nearestLong.price,radar.spot));
@@ -605,6 +680,7 @@ function decisionMetrics(){
   if(mm && Number.isFinite(mm.oiChange)){
     reasons.push(`OI 15分 ${mm.oiChange>=0?'+':''}${(mm.oiChange*100).toFixed(2)}%${Number.isFinite(mm.priceChange)?` / 価格 ${mm.priceChange>=0?'+':''}${(mm.priceChange*100).toFixed(2)}%`:''}`);
   }
+  if(ez){ reasons.push(`L2板 ${ez.bidPct>=.5?'買い':'売り'}側 ${(Math.max(ez.bidPct,ez.askPct)*100).toFixed(0)}%`); }
   return {up,down,confidence,label,tone,reasons:reasons.slice(0,4),used,mm};
 }
 
@@ -656,14 +732,18 @@ function renderQuickView(){
     setText('quickShortLine',priceFmt(radar.nearestShort.price));
     setText('quickShortLineMeta',`現在値から +${(ds*100).toFixed(2)}% / ${money(radar.nearestShort.notional)}`);
   }else{
-    setText('quickShortLine','—'); setText('quickShortLineMeta',state.asset.heatmap?'実清算データ待ち':'清算ソース未対応');
+    const ez=estimatedTriggerZones();
+    if(ez?.up){ setText('quickShortLine',priceFmt(ez.up.price)); setText('quickShortLineMeta',`推定上側反応帯 +${(ez.up.distance*100).toFixed(2)}% / 板 ${money(ez.up.notional)} ※実清算ではありません`); }
+    else { setText('quickShortLine','—'); setText('quickShortLineMeta',state.asset.heatmap?'実清算データ待ち':'推定上側反応帯を計算中'); }
   }
   if(radar?.nearestLong){
     const dl=Math.abs(distPct(radar.nearestLong.price,radar.spot));
     setText('quickLongLine',priceFmt(radar.nearestLong.price));
     setText('quickLongLineMeta',`現在値から -${(dl*100).toFixed(2)}% / ${money(radar.nearestLong.notional)}`);
   }else{
-    setText('quickLongLine','—'); setText('quickLongLineMeta',state.asset.heatmap?'実清算データ待ち':'清算ソース未対応');
+    const ez=estimatedTriggerZones();
+    if(ez?.down){ setText('quickLongLine',priceFmt(ez.down.price)); setText('quickLongLineMeta',`推定下側反応帯 -${(ez.down.distance*100).toFixed(2)}% / 板 ${money(ez.down.notional)} ※実清算ではありません`); }
+    else { setText('quickLongLine','—'); setText('quickLongLineMeta',state.asset.heatmap?'実清算データ待ち':'推定下側反応帯を計算中'); }
   }
 
   let advice='方向感は拮抗しています。無理なエントリーは避ける判定です。';
@@ -714,6 +794,7 @@ function setupTimers(){
   state.timers.push(setInterval(fetchMeta,CONFIG.infoPollMs));
   state.timers.push(setInterval(fetchHeatmap,CONFIG.heatmapPollMs));
   state.timers.push(setInterval(fetchPositioning,CONFIG.positioningPollMs));
+  state.timers.push(setInterval(fetchOrderBook,CONFIG.orderBookPollMs));
   state.timers.push(setInterval(()=>{
     state.tradeEvents=state.tradeEvents.filter(x=>x.ts>=Date.now()-CONFIG.maxTradeWindowMs);
     renderFlow(); renderPressure(); renderDecisionEngine();
@@ -755,19 +836,19 @@ function clearRelay(){
   const msg=$('relayTestResult'); if(msg) msg.textContent='標準Relay URLに戻しました。';
 }
 
-$('refreshBtn').addEventListener('click',()=>Promise.allSettled([fetchMeta(),fetchHeatmap(),fetchPositioning()]));
+$('refreshBtn').addEventListener('click',()=>Promise.allSettled([fetchMeta(),fetchHeatmap(),fetchPositioning(),fetchOrderBook()]));
 $('testRelayBtn')?.addEventListener('click',testRelay);
 $('clearRelayBtn')?.addEventListener('click',clearRelay);
 $('flowWindow').addEventListener('change',(e)=>{ state.flowWindowMs=Number(e.target.value)||300000; renderFlow(); renderPressure(); });
 $('clusterDepth')?.addEventListener('change',(e)=>{ state.clusterDepth=Number(e.target.value)||8; renderHeatmap(); });
-window.addEventListener('online',()=>{connectWs(true); fetchMeta(); fetchHeatmap(); fetchPositioning();});
+window.addEventListener('online',()=>{connectWs(true); fetchMeta(); fetchHeatmap(); fetchPositioning(); fetchOrderBook();});
 window.addEventListener('offline',()=>setStatus('error','OFFLINE'));
-document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'){ connectWs(); fetchMeta(); fetchHeatmap(); fetchPositioning(); } });
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'){ connectWs(); fetchMeta(); fetchHeatmap(); fetchPositioning(); fetchOrderBook(); } });
 
 (async function init(){
   renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderQuickView(); renderRelaySettings();
   connectWs(); setupTimers();
-  await Promise.allSettled([fetchMeta(),fetchHeatmap(),fetchPositioning()]);
+  await Promise.allSettled([fetchMeta(),fetchHeatmap(),fetchPositioning(),fetchOrderBook()]);
   if('serviceWorker' in navigator){
     try{
       const reg=await navigator.serviceWorker.register('./sw.js');
@@ -776,4 +857,4 @@ document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==
   }
 })();
 
-// LiqPulse v0.8.0
+// LiqPulse v0.9.0
