@@ -203,27 +203,48 @@ async function fetchHeatmap(){
 
 function normalizeHeatmap(raw){
   const levels=[];
-  const spot=state.latestPrice || state.ctxByCoin.get(state.asset.symbol)?.markPx;
+  const liveSpot=state.latestPrice || state.ctxByCoin.get(state.asset.symbol)?.markPx;
+  const sourceSpot=Number(raw?.spot_at_compute ?? raw?.spotAtCompute ?? raw?._meta?.spot_at_compute);
+  const spot=Number.isFinite(liveSpot)?liveSpot:(Number.isFinite(sourceSpot)?sourceSpot:NaN);
 
+  const pushLevel=(obj,forcedSide='')=>{
+    if(!obj || typeof obj!=='object') return;
+    const price=Number(obj.price ?? obj.liqPrice ?? obj.liquidationPrice ?? obj.level ?? obj.px ?? obj.price_level ?? obj.priceLevel);
+    const notional=Number(obj.notional_usd ?? obj.notionalUsd ?? obj.notional ?? obj.sizeUsd ?? obj.size_usd ?? obj.usd ?? obj.value ?? obj.totalNotional ?? obj.total_notional ?? obj.size);
+    if(!Number.isFinite(price) || !Number.isFinite(notional) || notional<=0) return;
+    let side=String(forcedSide || obj.side || obj.direction || obj.positionSide || obj.position_side || obj.type || '').toLowerCase();
+    if(side.includes('short') || side==='s') side='short';
+    else if(side.includes('long') || side==='l') side='long';
+    else side=Number.isFinite(spot)?(price>spot?'short':'long'):'';
+    if(side!=='long' && side!=='short') return;
+    const walletCount=Number(obj.wallet_count ?? obj.walletCount ?? obj.wallets ?? obj.accounts ?? obj.account_count ?? obj.accountCount);
+    const sourceDistancePct=Number(obj.distance_pct ?? obj.distancePct ?? obj.distance_percent ?? obj.distancePercent);
+    levels.push({
+      price,
+      notional,
+      side,
+      walletCount:Number.isFinite(walletCount)?walletCount:null,
+      sourceDistancePct:Number.isFinite(sourceDistancePct)?sourceDistancePct:null
+    });
+  };
+
+  // HyperPerps whale-heatmap v4: explicit parser first.
+  // Example: {spot_at_compute, updated_at, longs:[...], shorts:[...]}
+  if(Array.isArray(raw?.longs)) raw.longs.forEach(x=>pushLevel(x,'long'));
+  if(Array.isArray(raw?.shorts)) raw.shorts.forEach(x=>pushLevel(x,'short'));
+  if(Array.isArray(raw?.data?.longs)) raw.data.longs.forEach(x=>pushLevel(x,'long'));
+  if(Array.isArray(raw?.data?.shorts)) raw.data.shorts.forEach(x=>pushLevel(x,'short'));
+
+  // Generic fallback for future/alternate schemas.
   const maybePush=(obj,sideHint='')=>{
     if(!obj || typeof obj!=='object' || Array.isArray(obj)) return;
+    pushLevel(obj,sideHint);
     const keys=Object.keys(obj);
-    const pick=(names)=>{ for(const n of names){ if(n in obj) return obj[n]; } return undefined; };
-    const p=Number(pick(['price','liqPrice','liquidationPrice','level','px','price_level','priceLevel']));
-    let n=Number(pick(['notional','sizeUsd','size_usd','usd','value','notionalUsd','notional_usd','totalNotional','total_notional','size']));
-    let side=String(pick(['side','direction','positionSide','position_side','type']) ?? sideHint ?? '').toLowerCase();
-    if(side.includes('short')||side==='s') side='short'; else if(side.includes('long')||side==='l') side='long'; else side='';
-    if(Number.isFinite(p) && Number.isFinite(n) && n>0){
-      if(!side && Number.isFinite(spot)) side=p>spot?'short':'long';
-      levels.push({price:p,notional:n,side});
-      return;
-    }
-    // Some APIs use arrays/objects with price as key and notional as value.
     if(keys.length===1){
       const kp=Number(keys[0]), kv=Number(obj[keys[0]]);
       if(Number.isFinite(kp)&&Number.isFinite(kv)&&kv>0){
         const inferred=sideHint || (Number.isFinite(spot)?(kp>spot?'short':'long'):'');
-        levels.push({price:kp,notional:kv,side:inferred});
+        if(inferred==='long'||inferred==='short') levels.push({price:kp,notional:kv,side:inferred,walletCount:null,sourceDistancePct:null});
       }
     }
   };
@@ -231,15 +252,17 @@ function normalizeHeatmap(raw){
   const walk=(node,hint='',depth=0)=>{
     if(depth>8 || node==null) return;
     if(Array.isArray(node)){
-      // flat pair [price, notional] or [price, notional, side]
       if(node.length>=2 && Number.isFinite(Number(node[0])) && Number.isFinite(Number(node[1]))){
         const p=Number(node[0]), n=Number(node[1]);
         let side=String(node[2]??hint??'').toLowerCase();
-        if(side.includes('short')||side==='s') side='short'; else if(side.includes('long')||side==='l') side='long'; else side=Number.isFinite(spot)?(p>spot?'short':'long'):'';
-        if(n>0) levels.push({price:p,notional:n,side});
+        if(side.includes('short')||side==='s') side='short';
+        else if(side.includes('long')||side==='l') side='long';
+        else side=Number.isFinite(spot)?(p>spot?'short':'long'):'';
+        if(n>0 && (side==='long'||side==='short')) levels.push({price:p,notional:n,side,walletCount:null,sourceDistancePct:null});
         return;
       }
-      node.forEach(x=>walk(x,hint,depth+1)); return;
+      node.forEach(x=>walk(x,hint,depth+1));
+      return;
     }
     if(typeof node!=='object') return;
     maybePush(node,hint);
@@ -255,17 +278,21 @@ function normalizeHeatmap(raw){
   const merged=new Map();
   for(const x of levels){
     if(!Number.isFinite(x.price)||!Number.isFinite(x.notional)||x.notional<=0) continue;
-    if(!x.side && Number.isFinite(spot)) x.side=x.price>spot?'short':'long';
     if(x.side!=='long'&&x.side!=='short') continue;
     const key=`${x.side}:${x.price.toFixed(8)}`;
     const prev=merged.get(key);
     if(!prev || x.notional>prev.notional) merged.set(key,x);
   }
-  const tsRaw=Number(raw?.timestamp ?? raw?.updatedAt ?? raw?.updated_at ?? raw?.time ?? raw?.generated_at ?? raw?.generatedAt);
-  const ts=Number.isFinite(tsRaw)?(tsRaw<1e12?tsRaw*1000:tsRaw):Date.now();
-  return {levels:[...merged.values()],timestamp:ts,raw};
-}
 
+  const tsRaw=Number(raw?.updated_at ?? raw?.timestamp ?? raw?.updatedAt ?? raw?.time ?? raw?.generated_at ?? raw?.generatedAt ?? raw?._meta?.as_of);
+  let ts;
+  if(Number.isFinite(tsRaw)) ts=tsRaw<1e12?tsRaw*1000:tsRaw;
+  else {
+    const iso=Date.parse(raw?._meta?.as_of ?? raw?.as_of ?? '');
+    ts=Number.isFinite(iso)?iso:Date.now();
+  }
+  return {levels:[...merged.values()],timestamp:ts,raw,sourceSpot:Number.isFinite(sourceSpot)?sourceSpot:null};
+}
 function selectVisibleLevels(){
   const spot=state.latestPrice || state.ctxByCoin.get(state.asset.symbol)?.markPx;
   const lv=state.heatmap?.levels||[];
@@ -294,7 +321,8 @@ function renderHeatmap(){
   const addRows=(arr,side)=>arr.forEach(x=>{
     const d=distPct(x.price,spot);
     const row=document.createElement('div'); row.className='liq-row';
-    row.innerHTML=`<div class="liq-price"><b>${priceFmt(x.price)}</b><small>${Number.isFinite(d)?(d*100).toFixed(2)+'%':''}</small></div><div class="liq-track"><div class="liq-fill ${side}" style="width:${clamp(x.notional/max*100,2,100)}%"></div></div><div class="liq-value ${side==='short'?'green':'red'}">${money(x.notional)}</div>`;
+    const wallet=x.walletCount?` · ${x.walletCount} wallets`:'';
+    row.innerHTML=`<div class="liq-price"><b>${priceFmt(x.price)}</b><small>${Number.isFinite(d)?(d*100).toFixed(2)+'%':''}${wallet}</small></div><div class="liq-track"><div class="liq-fill ${side}" style="width:${clamp(x.notional/max*100,2,100)}%"></div></div><div class="liq-value ${side==='short'?'green':'red'}">${money(x.notional)}</div>`;
     host.appendChild(row);
   });
   addRows(above,'short');

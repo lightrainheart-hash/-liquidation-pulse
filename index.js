@@ -28,7 +28,7 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === '/health') {
-      return Response.json({ ok: true, service: 'liqpulse-relay', version: '0.3.0' }, { headers });
+      return Response.json({ ok: true, service: 'liqpulse-relay', version: '0.3.2' }, { headers });
     }
 
     const match = url.pathname.match(/^\/heatmap\/([A-Za-z0-9_-]+)$/);

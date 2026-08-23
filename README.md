@@ -1,4 +1,4 @@
-# LiqPulse v0.3.1
+# LiqPulse v0.3.2
 
 iPhone Safari/PWA向けの分析専用リアルタイム先物モニターです。注文機能はありません。
 
@@ -16,7 +16,7 @@ iPhone Safari/PWA向けの分析専用リアルタイム先物モニターです
 RelayはBTC/ETH/SOLの公開清算APIのみを中継し、APIキー・Cookie・ユーザーデータは扱いません。
 
 
-## v0.3.1 GitHub → Cloudflare Workers 自動デプロイ
+## v0.3.2 GitHub → Cloudflare Workers 自動デプロイ
 
 `worker/` をCloudflare Worker専用ルートとして追加しました。
 
@@ -28,4 +28,3 @@ RelayはBTC/ETH/SOLの公開清算APIのみを中継し、APIキー・Cookie・�
 - LiqPulse本体には標準Relay URLをプリセット
 
 Cloudflareで既存Worker `liqpulse-relay` → Settings → Builds → Connect からGitHubリポジトリを接続し、Root directoryを `worker` に設定してください。
-Cloudflare deploy trigger
