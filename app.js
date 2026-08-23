@@ -4,13 +4,11 @@ const CONFIG = {
   infoUrl: 'https://api.hyperliquid.xyz/info',
   wsUrl: 'wss://api.hyperliquid.xyz/ws',
   heatmapDirect: 'https://trade.hyperperps.app/api/public/heatmap/',
-  // Public, no-auth fallbacks. Public market data only; no API keys or user data are sent.
-  heatmapFallbacks: [
-    (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-    (url) => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
-  ],
+  // Optional first-party relay. Set once in-app after deploying relay-worker.js to Cloudflare Workers.
+  relayBase: localStorage.getItem('liqpulse_relay_base') || '',
   infoPollMs: 15000,
   heatmapPollMs: 60000,
+  relayTimeoutMs: 10000,
   maxTradeWindowMs: 60 * 60 * 1000,
   wsStaleMs: 15000,
   liqBiasRangePct: 0.10,
@@ -75,7 +73,7 @@ async function switchAsset(symbol){
   state.switching=true;
   state.asset=ASSETS.find(x=>x.symbol===symbol)||ASSETS[0];
   state.tradeEvents=[]; state.heatmap=null; state.latestPrice=null;
-  renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias();
+  renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRelaySettings();
   connectWs(true);
   await Promise.allSettled([fetchMeta(), fetchHeatmap()]);
   state.switching=false;
@@ -181,11 +179,14 @@ async function fetchHeatmap(){
   }
   setText('statusHeatmap','取得中'); setText('statusHeatmapRoute','接続中');
   const direct=CONFIG.heatmapDirect+encodeURIComponent(state.asset.symbol);
-  const routes=[{name:'Direct',url:direct},...CONFIG.heatmapFallbacks.map((fn,i)=>({name:i===0?'Fallback A':'Fallback B',url:fn(direct)}))];
+  const relayBase=(CONFIG.relayBase||'').replace(/\/$/,'');
+  const routes=[];
+  if(relayBase) routes.push({name:'Relay',url:`${relayBase}/heatmap/${encodeURIComponent(state.asset.symbol)}`});
+  routes.push({name:'Direct',url:direct});
   let lastErr=null;
   for(const route of routes){
     try{
-      const raw=await fetchJsonWithTimeout(route.url,10000);
+      const raw=await fetchJsonWithTimeout(route.url,CONFIG.relayTimeoutMs);
       const normalized=normalizeHeatmap(raw);
       if(!normalized.levels.length) throw new Error('No recognized liquidation levels');
       state.heatmap=normalized;
@@ -193,7 +194,7 @@ async function fetchHeatmap(){
       renderHeatmap(); renderLiqBias(); renderPressure(); return;
     }catch(err){ lastErr=err; console.warn('heatmap route failed',route.name,err); }
   }
-  state.heatmap=null; setText('statusHeatmap','取得失敗'); setText('statusHeatmapRoute','全経路失敗');
+  state.heatmap=null; setText('statusHeatmap','取得失敗'); setText('statusHeatmapRoute',relayBase?'Relay / Direct失敗':'Relay未設定 / Direct失敗');
   console.warn('heatmap all routes failed',lastErr);
   renderHeatmap(); renderLiqBias(); renderPressure();
 }
@@ -280,7 +281,7 @@ function renderHeatmap(){
     note.classList.remove('hidden'); setText('heatmapAge','未対応'); return;
   }
   if(!state.heatmap?.levels?.length){
-    note.textContent='清算データを取得できませんでした。Direct → 2つの公開フォールバック経路を自動試行します。しばらくして更新してください。';
+    note.textContent=CONFIG.relayBase?'清算データを取得できませんでした。RelayとDirectの両方を再試行します。':'SafariのCORS制限でDirect取得できない場合があります。設定からCloudflare Relay URLを登録してください。';
     note.classList.remove('hidden'); setText('heatmapAge','取得待ち'); return;
   }
   const {spot,above,below}=selectVisibleLevels();
@@ -352,14 +353,50 @@ function setupTimers(){
   },5000));
 }
 
+
+function renderRelaySettings(){
+  const input=$('relayUrl');
+  if(input) input.value=CONFIG.relayBase||'';
+  const badge=$('relayBadge');
+  if(badge) badge.textContent=CONFIG.relayBase?'設定済み':'未設定';
+}
+async function testRelay(){
+  const input=$('relayUrl');
+  const btn=$('testRelayBtn');
+  const msg=$('relayTestResult');
+  const base=(input?.value||'').trim().replace(/\/$/,'');
+  if(!base){ if(msg) msg.textContent='Relay URLを入力してください。'; return; }
+  try{
+    if(btn) btn.disabled=true;
+    if(msg) msg.textContent='接続テスト中…';
+    const raw=await fetchJsonWithTimeout(`${base}/heatmap/BTC`,CONFIG.relayTimeoutMs);
+    const normalized=normalizeHeatmap(raw);
+    if(!normalized.levels.length) throw new Error('清算レベルを認識できません');
+    CONFIG.relayBase=base;
+    localStorage.setItem('liqpulse_relay_base',base);
+    renderRelaySettings();
+    if(msg) msg.textContent=`成功: ${normalized.levels.length} levels`;
+    await fetchHeatmap();
+  }catch(err){
+    console.warn('relay test',err);
+    if(msg) msg.textContent=`失敗: ${err?.message||'接続できません'}`;
+  }finally{ if(btn) btn.disabled=false; }
+}
+function clearRelay(){
+  CONFIG.relayBase=''; localStorage.removeItem('liqpulse_relay_base'); renderRelaySettings();
+  const msg=$('relayTestResult'); if(msg) msg.textContent='Relay設定を削除しました。';
+}
+
 $('refreshBtn').addEventListener('click',()=>Promise.allSettled([fetchMeta(),fetchHeatmap()]));
+$('testRelayBtn')?.addEventListener('click',testRelay);
+$('clearRelayBtn')?.addEventListener('click',clearRelay);
 $('flowWindow').addEventListener('change',(e)=>{ state.flowWindowMs=Number(e.target.value)||300000; renderFlow(); renderPressure(); });
 window.addEventListener('online',()=>{connectWs(true); fetchMeta(); fetchHeatmap();});
 window.addEventListener('offline',()=>setStatus('error','OFFLINE'));
 document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'){ connectWs(); fetchMeta(); fetchHeatmap(); } });
 
 (async function init(){
-  renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias();
+  renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRelaySettings();
   connectWs(); setupTimers();
   await Promise.allSettled([fetchMeta(),fetchHeatmap()]);
   if('serviceWorker' in navigator){

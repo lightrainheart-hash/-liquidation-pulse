@@ -10,13 +10,13 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="apple-touch-icon" href="./icon-180.png" />
   <link rel="stylesheet" href="./styles.css" />
-  <title>LiqPulse v0.2</title>
+  <title>LiqPulse v0.3</title>
 </head>
 <body>
   <main class="app-shell">
     <header class="topbar">
       <div>
-        <div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v0.2</span></div>
+        <div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v0.3</span></div>
         <h1>LiqPulse</h1>
       </div>
       <div id="connBadge" class="status offline"><span></span><b>接続中</b></div>
@@ -98,6 +98,23 @@
       </div>
     </section>
 
+
+    <section class="card compact">
+      <div class="section-head">
+        <div>
+          <div class="card-title">清算データ Relay</div>
+          <div class="subtitle">iPhone SafariのCORS制限回避用 / Cloudflare Workers</div>
+        </div>
+        <span id="relayBadge" class="pill">未設定</span>
+      </div>
+      <label class="field-label" for="relayUrl">Worker URL</label>
+      <input id="relayUrl" class="text-input" type="url" inputmode="url" placeholder="https://xxxxx.workers.dev" autocomplete="off" autocapitalize="off" spellcheck="false" />
+      <div class="button-row">
+        <button id="testRelayBtn" class="secondary-btn" type="button">保存して接続テスト</button>
+        <button id="clearRelayBtn" class="ghost-btn" type="button">削除</button>
+      </div>
+      <div id="relayTestResult" class="hint">未設定でも価格・OI・Funding・Tradesは動作します。BTC/ETH/SOLの実清算クラスターにはRelay推奨。</div>
+    </section>
     <section class="card compact">
       <div class="card-title">データ状態</div>
       <ul class="data-status">
@@ -109,9 +126,9 @@
     </section>
 
     <footer>
-      分析専用・注文機能なし。清算クラスターは価格到達を保証しません。Account L/Sは未実装です。
+      分析専用・注文機能なし。清算クラスターは価格到達を保証しません。Account L/Sは未実装です。BTC/ETH/SOL清算データはHyperPerps公開APIをRelay経由で取得できます。
     </footer>
   </main>
-  <script src="./app.js?v=0.2.0" defer></script>
+  <script src="./app.js?v=0.3.0" defer></script>
 </body>
 </html>

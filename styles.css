@@ -15,3 +15,11 @@
 .liq-ratio #shortLiqBar{background:linear-gradient(90deg,#20d49a,#33d8a6)}
 .liq-ratio #longLiqBar{background:linear-gradient(90deg,#ff566f,#ff6b80)}
 @media(max-width:560px){.cluster-summary{grid-template-columns:1fr}.grid.two{grid-template-columns:1fr}}
+.field-label{display:block;margin:14px 0 8px;color:#8fa0b8;font-size:.82rem;font-weight:700}
+.text-input{width:100%;box-sizing:border-box;border:1px solid #263750;border-radius:14px;background:#0b1321;color:#f3f7ff;padding:13px 14px;font-size:16px;outline:none}
+.text-input:focus{border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.12)}
+.button-row{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap}
+.secondary-btn,.ghost-btn{border-radius:12px;padding:11px 14px;font-weight:800;font-size:.88rem}
+.secondary-btn{border:1px solid #315d96;background:#17355f;color:#f5f8ff}
+.ghost-btn{border:1px solid #27364c;background:transparent;color:#9eabc0}
+.secondary-btn:disabled{opacity:.55}
