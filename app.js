@@ -83,7 +83,7 @@ async function switchAsset(symbol){
   state.switching=true;
   state.asset=ASSETS.find(x=>x.symbol===symbol)||ASSETS[0];
   state.tradeEvents=[]; state.heatmap=null; state.positioning=null; state.latestPrice=null;
-  renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderRelaySettings();
+  renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderQuickView(); renderRelaySettings();
   connectWs(true);
   await Promise.allSettled([fetchMeta(), fetchHeatmap(), fetchPositioning()]);
   state.switching=false;
@@ -607,6 +607,73 @@ function decisionMetrics(){
   }
   return {up,down,confidence,label,tone,reasons:reasons.slice(0,4),used,mm};
 }
+
+function quickDecision(){
+  const d=decisionMetrics();
+  const radar=radarMetrics();
+  const delta=d.up-d.down;
+  let dominance='均衡', dominanceTone='neutral';
+  if(delta>=8){ dominance='LONG優勢'; dominanceTone='up'; }
+  else if(delta<=-8){ dominance='SHORT優勢'; dominanceTone='down'; }
+
+  // Do not force a trade when the signal is weak or incomplete.
+  let action='見送り', actionTone='neutral';
+  const edge=Math.abs(delta);
+  if(d.confidence>=55 && edge>=16){
+    if(delta>0){ action='LONG候補'; actionTone='up'; }
+    else { action='SHORT候補'; actionTone='down'; }
+  }
+  if(d.confidence>=70 && edge>=28){
+    action=delta>0?'LONG優先':'SHORT優先';
+  }
+
+  const flow=flowTotals();
+  const buyPct=flow.total?flow.buy/flow.total:0.5;
+  const mm=d.mm;
+  let alert='通常', alertTone='neutral';
+  const extremeFlow=flow.total>0 && (buyPct>=0.85 || buyPct<=0.15);
+  const fastPrice=mm && Number.isFinite(mm.priceChange) && Math.abs(mm.priceChange)>=0.01;
+  const fastOi=mm && Number.isFinite(mm.oiChange) && Math.abs(mm.oiChange)>=0.02;
+  if(extremeFlow){ alert=buyPct>.5?'買いフロー急増':'売りフロー急増'; alertTone=buyPct>.5?'up':'down'; }
+  if(fastPrice || fastOi){ alert='急変警戒'; alertTone=delta>=0?'up':'down'; }
+
+  return {d,radar,dominance,dominanceTone,action,actionTone,alert,alertTone,edge};
+}
+function renderQuickView(){
+  const q=quickDecision();
+  const {d,radar}=q;
+  setText('quickDominance',q.dominance);
+  setText('quickDominanceMeta',`LONG ${Math.round(d.up)} / SHORT ${Math.round(d.down)}`);
+  setText('quickAction',q.action);
+  setText('quickActionMeta',`信頼度 ${d.confidence}%`);
+
+  const dom=$('quickDominance'); if(dom) dom.className=q.dominanceTone==='up'?'green':q.dominanceTone==='down'?'red':'';
+  const act=$('quickAction'); if(act) act.className=q.actionTone==='up'?'green':q.actionTone==='down'?'red':'';
+  const badge=$('quickAlert'); if(badge){ badge.textContent=q.alert; badge.className=`signal-badge ${q.alertTone}`; }
+
+  if(radar?.nearestShort){
+    const ds=Math.abs(distPct(radar.nearestShort.price,radar.spot));
+    setText('quickShortLine',priceFmt(radar.nearestShort.price));
+    setText('quickShortLineMeta',`現在値から +${(ds*100).toFixed(2)}% / ${money(radar.nearestShort.notional)}`);
+  }else{
+    setText('quickShortLine','—'); setText('quickShortLineMeta','取得待ち');
+  }
+  if(radar?.nearestLong){
+    const dl=Math.abs(distPct(radar.nearestLong.price,radar.spot));
+    setText('quickLongLine',priceFmt(radar.nearestLong.price));
+    setText('quickLongLineMeta',`現在値から -${(dl*100).toFixed(2)}% / ${money(radar.nearestLong.notional)}`);
+  }else{
+    setText('quickLongLine','—'); setText('quickLongLineMeta','取得待ち');
+  }
+
+  let advice='方向感は拮抗しています。無理なエントリーは避ける判定です。';
+  if(q.action.startsWith('LONG')) advice=`${q.dominance}。現状はLONG側を優先候補。ただし清算ライン到達や急変時は再判定してください。`;
+  else if(q.action.startsWith('SHORT')) advice=`${q.dominance}。現状はSHORT側を優先候補。ただし清算ライン到達や急変時は再判定してください。`;
+  else if(q.dominance==='LONG優勢') advice=`LONG側がやや優勢ですが信頼度が不足しています。現在は見送り優先です。`;
+  else if(q.dominance==='SHORT優勢') advice=`SHORT側がやや優勢ですが信頼度が不足しています。現在は見送り優先です。`;
+  setText('quickAdvice',advice);
+}
+
 function renderDecisionEngine(){
   const d=decisionMetrics(); state.decision=d;
   if(!d) return;
@@ -623,6 +690,7 @@ function renderDecisionEngine(){
   let fs='中立'; if(Number.isFinite(f)){ if(f>0.0001) fs='Long過熱寄り'; else if(f<-0.0001) fs='Short過熱寄り'; }
   setText('fundingState',fs);
   setText('positionSource',state.positioning?.sources?.global||'—');
+  renderQuickView();
 }
 
 function renderPressure(){
@@ -697,7 +765,7 @@ window.addEventListener('offline',()=>setStatus('error','OFFLINE'));
 document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'){ connectWs(); fetchMeta(); fetchHeatmap(); fetchPositioning(); } });
 
 (async function init(){
-  renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderRelaySettings();
+  renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderQuickView(); renderRelaySettings();
   connectWs(); setupTimers();
   await Promise.allSettled([fetchMeta(),fetchHeatmap(),fetchPositioning()]);
   if('serviceWorker' in navigator){
@@ -708,4 +776,4 @@ document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==
   }
 })();
 
-// LiqPulse v0.6.0
+// LiqPulse v0.7.0
