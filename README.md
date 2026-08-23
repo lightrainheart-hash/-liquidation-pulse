@@ -28,3 +28,4 @@ RelayはBTC/ETH/SOLの公開清算APIのみを中継し、APIキー・Cookie・�
 - LiqPulse本体には標準Relay URLをプリセット
 
 Cloudflareで既存Worker `liqpulse-relay` → Settings → Builds → Connect からGitHubリポジトリを接続し、Root directoryを `worker` に設定してください。
+Cloudflare deploy trigger
