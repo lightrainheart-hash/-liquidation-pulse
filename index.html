@@ -10,13 +10,13 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="apple-touch-icon" href="./icon-180.png" />
   <link rel="stylesheet" href="./styles.css" />
-  <title>LiqPulse v1.0.0</title>
+  <title>LiqPulse v1.1.0</title>
 </head>
 <body>
   <main class="app-shell">
     <header class="topbar">
       <div>
-        <div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v1.0.0</span></div>
+        <div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v1.1.0</span></div>
         <h1>LiqPulse</h1>
       </div>
       <div id="connBadge" class="status offline"><span></span><b>接続中</b></div>
@@ -63,9 +63,16 @@
         <div><span>上昇参加率</span><b id="sp500AdvPct">—</b><small id="sp500AdvMeta">—</small></div>
         <div><span>等ウェイト</span><b id="sp500EqualWeighted">—</b><small id="sp500WeightDivergence">—</small></div>
         <div><span>大型7社</span><b id="sp500Mega7">—</b><small id="sp500Mega7Meta">—</small></div>
-        <div><span>上昇セクター</span><b id="sp500PositiveSectors">—</b><small id="sp500SectorMeta">—</small></div>
+        <div><span>上昇業種</span><b id="sp500PositiveSectors">—</b><small id="sp500SectorMeta">TradingView業種分類</small></div>
       </div>
 
+      <div class="sp500-leadership-grid">
+        <div><span>最強業種</span><b id="sp500StrongSector">—</b><small id="sp500StrongSectorMeta">—</small></div>
+        <div><span>最弱業種</span><b id="sp500WeakSector">—</b><small id="sp500WeakSectorMeta">—</small></div>
+        <div><span>上位寄与</span><b id="sp500TopLeader">—</b><small id="sp500TopLeaderMeta">—</small></div>
+        <div><span>下位寄与</span><b id="sp500TopLaggard">—</b><small id="sp500TopLaggardMeta">—</small></div>
+      </div>
+      <div id="sp500RiskStrip" class="sp500-risk-strip neutral">市場内部リスクを分析中</div>
       <div id="sp500CommandAdvice" class="quick-advice">S&amp;P 500構成銘柄データを取得後に総合判断します。</div>
       <div class="hint">大型株だけで指数が動いている場合と、市場全体が同方向に参加している場合を区別します。これは売買判断の補助指標で、将来の値動きを保証するものではありません。</div>
     </section>
@@ -107,6 +114,30 @@
       </div>
       <div id="quickAdvice" class="quick-advice">データ取得後に、方向と売買候補を簡潔に表示します。</div>
       <div class="hint">「おすすめ」はリアルタイム市場データを統合した売買判断の補助です。低信頼度では無理にLONG/SHORTを選ばず「見送り」を表示します。</div>
+    </section>
+
+    <section id="btcWhaleCard" class="card btc-whale-card hidden">
+      <div class="section-head">
+        <div>
+          <div class="card-title whale-title">BTC Whale Order Map</div>
+          <div class="subtitle">大口売り壁・買い壁を価格チャート上に可視化 / Hyperliquid L2</div>
+        </div>
+        <div class="engine-badges"><span id="whalePressureBadge" class="signal-badge neutral">分析中</span><span id="whaleBookAge" class="pill">—</span></div>
+      </div>
+      <div class="whale-summary-grid">
+        <div><span>直上の大口売り壁</span><b id="whaleNearestSell">—</b><small id="whaleNearestSellMeta">—</small></div>
+        <div><span>直下の大口買い壁</span><b id="whaleNearestBuy">—</b><small id="whaleNearestBuyMeta">—</small></div>
+        <div><span>売り壁総額</span><b id="whaleSellTotal" class="red">—</b><small>現在値 ±3%</small></div>
+        <div><span>買い壁総額</span><b id="whaleBuyTotal" class="green">—</b><small>現在値 ±3%</small></div>
+      </div>
+      <div class="whale-chart-wrap">
+        <canvas id="whaleCanvas" class="whale-canvas" aria-label="BTC大口注文マップ"></canvas>
+        <div class="whale-legend"><span class="sell">売り壁</span><span class="buy">買い壁</span><span class="px">BTC価格</span><span class="ghost">消失壁(推定)</span></div>
+      </div>
+      <div id="whaleInsight" class="quick-advice">L2板を蓄積して大口注文の継続・消失を分析します。</div>
+      <div class="whale-list-head"><span>現在の大口注文</span><small>上位8件</small></div>
+      <div id="whaleOrderList" class="whale-order-list"></div>
+      <div class="hint">赤=大口売り指値、緑=大口買い指値。線の太さは注文額、透明度は継続性を反映します。「消失壁」は前回まで存在した板が消えたことを示す推定で、約定・キャンセルの断定ではありません。CoinGlass等の取引所横断データではなくHyperliquid L2由来です。</div>
     </section>
 
     <section id="finvizMapCard" class="card sp500-map-card hidden">

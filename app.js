@@ -11,7 +11,7 @@ const CONFIG = {
   infoPollMs: 15000,
   heatmapPollMs: 60000,
   positioningPollMs: 60000,
-  orderBookPollMs: 15000,
+  orderBookPollMs: 10000,
   sp500MapPollMs: 120000,
   relayTimeoutMs: 10000,
   maxTradeWindowMs: 60 * 60 * 1000,
@@ -52,6 +52,8 @@ const state = {
   switching:false,
   lastWsAt:0,
   decision:null,
+  whaleHistory:[],
+  whaleLastBookAt:0,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -93,14 +95,16 @@ function updateAssetSpecificPanels(){
   if(finviz) finviz.classList.toggle('hidden',state.asset.symbol!=='SP500');
   const command=$('sp500CommandCard');
   if(command) command.classList.toggle('hidden',state.asset.symbol!=='SP500');
+  const whale=$('btcWhaleCard');
+  if(whale) whale.classList.toggle('hidden',state.asset.symbol!=='BTC');
 }
 
 async function switchAsset(symbol){
   if(state.switching || symbol===state.asset.symbol) return;
   state.switching=true;
   state.asset=ASSETS.find(x=>x.symbol===symbol)||ASSETS[0];
-  state.tradeEvents=[]; state.heatmap=null; state.positioning=null; state.orderbook=null; state.sp500Map=null; state.latestPrice=null;
-  renderAssetTabs(); updateAssetSpecificPanels(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderQuickView(); renderSp500Command(); renderRelaySettings();
+  state.tradeEvents=[]; state.heatmap=null; state.positioning=null; state.orderbook=null; state.sp500Map=null; state.latestPrice=null; state.whaleHistory=[]; state.whaleLastBookAt=0;
+  renderAssetTabs(); updateAssetSpecificPanels(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderQuickView(); renderSp500Command(); renderWhaleOrderMap(); renderRelaySettings();
   connectWs(true);
   await Promise.allSettled([fetchMeta(), fetchHeatmap(), fetchPositioning(), fetchOrderBook(), fetchSp500Map()]);
   state.switching=false;
@@ -216,11 +220,11 @@ function ingestTrades(trades){
   for(const t of trades){
     const px=Number(t.px), sz=Number(t.sz), ts=Number(t.time)||now;
     if(!Number.isFinite(px)||!Number.isFinite(sz)) continue;
-    state.tradeEvents.push({ts,usd:px*sz,buy:t.side==='B'});
+    state.tradeEvents.push({ts,usd:px*sz,buy:t.side==='B',price:px});
     state.latestPrice=px;
   }
   state.tradeEvents=state.tradeEvents.filter(x=>x.ts>=now-CONFIG.maxTradeWindowMs);
-  renderFlow(); renderBase(); renderPressure(); renderDecisionEngine();
+  renderFlow(); renderBase(); renderPressure(); renderDecisionEngine(); renderWhaleOrderMap();
 }
 
 function flowTotals(windowMs=state.flowWindowMs){
@@ -277,9 +281,10 @@ async function fetchOrderBook(){
   }
   const ob=normalizeOrderBook(raw);
   state.orderbook=ob;
+  if(ob) recordWhaleSnapshot(ob);
   setText('statusOrderBook',ob?'正常':'取得失敗');
   if(!ob) console.warn('orderbook',err);
-  renderQuickView(); renderDecisionEngine();
+  renderQuickView(); renderDecisionEngine(); renderWhaleOrderMap();
 }
 function estimatedTriggerZones(){
   const ob=state.orderbook, spot=state.latestPrice||state.ctxByCoin.get(state.asset.symbol)?.markPx;
@@ -297,6 +302,72 @@ function estimatedTriggerZones(){
   return {up,down,bidTotal,askTotal,bidPct:total?bidTotal/total:.5,askPct:total?askTotal/total:.5};
 }
 
+
+
+function whaleSnapshotKey(){ return 'liqpulse_btc_whale_walls_v1'; }
+function loadWhaleHistory(){
+  try{ const raw=JSON.parse(localStorage.getItem(whaleSnapshotKey())||'[]'); const cutoff=Date.now()-45*60*1000; return Array.isArray(raw)?raw.filter(x=>Number(x.ts)>=cutoff):[]; }catch{return []}
+}
+function saveWhaleHistory(){
+  try{ localStorage.setItem(whaleSnapshotKey(),JSON.stringify(state.whaleHistory.slice(-120))); }catch{}
+}
+function recordWhaleSnapshot(ob){
+  if(state.asset.symbol!=='BTC'||!ob) return;
+  const now=Date.now(); if(state.whaleLastBookAt && now-state.whaleLastBookAt<7000) return; state.whaleLastBookAt=now;
+  const spot=state.latestPrice||state.ctxByCoin.get('BTC')?.markPx; if(!Number.isFinite(spot)) return;
+  const rows=[...ob.asks.map(x=>({...x,side:'sell'})),...ob.bids.map(x=>({...x,side:'buy'}))].filter(x=>Math.abs(x.price/spot-1)<=0.035);
+  const notionals=rows.map(x=>x.notional).sort((a,b)=>a-b); const q=notionals[Math.max(0,Math.floor(notionals.length*.72))]||0; const threshold=Math.max(150000,q);
+  const walls=rows.filter(x=>x.notional>=threshold).sort((a,b)=>b.notional-a.notional).slice(0,28).map(x=>({price:x.price,notional:x.notional,side:x.side,n:x.n||null}));
+  const prev=state.whaleHistory[state.whaleHistory.length-1];
+  const disappeared=[];
+  if(prev?.walls?.length){ for(const p of prev.walls){ if(!walls.some(w=>w.side===p.side&&Math.abs(w.price/p.price-1)<0.00018)) disappeared.push({...p,lastSeen:prev.ts}); } }
+  state.whaleHistory.push({ts:now,spot,walls,disappeared:disappeared.slice(0,12)}); state.whaleHistory=state.whaleHistory.filter(x=>now-x.ts<=45*60*1000).slice(-120); saveWhaleHistory();
+}
+function whaleMetrics(){
+  if(state.asset.symbol!=='BTC') return null;
+  const ob=state.orderbook, spot=state.latestPrice||state.ctxByCoin.get('BTC')?.markPx; if(!ob||!Number.isFinite(spot)) return null;
+  const rows=[...ob.asks.map(x=>({...x,side:'sell'})),...ob.bids.map(x=>({...x,side:'buy'}))].filter(x=>Math.abs(x.price/spot-1)<=0.03);
+  const notionals=rows.map(x=>x.notional).sort((a,b)=>a-b); const q=notionals[Math.max(0,Math.floor(notionals.length*.70))]||0; const threshold=Math.max(120000,q);
+  const walls=rows.filter(x=>x.notional>=threshold).sort((a,b)=>b.notional-a.notional);
+  const sells=walls.filter(x=>x.side==='sell'), buys=walls.filter(x=>x.side==='buy');
+  const sellTotal=sells.reduce((a,x)=>a+x.notional,0), buyTotal=buys.reduce((a,x)=>a+x.notional,0);
+  const nearestSell=[...sells].sort((a,b)=>a.price-b.price)[0]||null, nearestBuy=[...buys].sort((a,b)=>b.price-a.price)[0]||null;
+  return {spot,walls,sells,buys,sellTotal,buyTotal,nearestSell,nearestBuy,threshold};
+}
+function whaleCandles(){
+  const end=Date.now(), start=end-45*60*1000, bucket=60*1000, map=new Map();
+  const tradePts=state.tradeEvents.filter(t=>t.ts>=start&&Number.isFinite(t.price)).map(t=>({ts:t.ts,price:t.price}));
+  // Merge live trades with persisted snapshots so the line survives brief reconnects.
+  const snaps=loadMarketSnapshots('BTC').filter(x=>x.ts>=start&&Number.isFinite(x.price));
+  const pts=[...snaps.map(x=>({ts:x.ts,price:x.price})),...tradePts]; if(Number.isFinite(state.latestPrice)) pts.push({ts:end,price:state.latestPrice});
+  return pts.sort((a,b)=>a.ts-b.ts);
+}
+function renderWhaleCanvas(metrics){
+  const canvas=$('whaleCanvas'); if(!canvas||state.asset.symbol!=='BTC') return;
+  const rect=canvas.getBoundingClientRect(), dpr=Math.min(2,window.devicePixelRatio||1), w=Math.max(320,Math.floor(rect.width)), h=Math.max(260,Math.floor(rect.height));
+  if(canvas.width!==Math.floor(w*dpr)||canvas.height!==Math.floor(h*dpr)){canvas.width=Math.floor(w*dpr);canvas.height=Math.floor(h*dpr);} const ctx=canvas.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,w,h);
+  ctx.fillStyle='#070d15';ctx.fillRect(0,0,w,h); const pad={l:10,r:54,t:12,b:24}; const iw=w-pad.l-pad.r, ih=h-pad.t-pad.b;
+  const hist=state.whaleHistory.length?state.whaleHistory:loadWhaleHistory(); const allWalls=[]; for(const s of hist.slice(-70)){ for(const wall of s.walls||[]) allWalls.push(wall); for(const wall of s.disappeared||[]) allWalls.push(wall); }
+  const spot=metrics?.spot||state.latestPrice; if(!Number.isFinite(spot)) return;
+  let minP=spot*.97,maxP=spot*1.03; for(const x of allWalls){ if(x.price>spot*.955&&x.price<spot*1.045){minP=Math.min(minP,x.price);maxP=Math.max(maxP,x.price);} }
+  const py=p=>pad.t+(maxP-p)/(maxP-minP)*ih; const tx=ts=>pad.l+clamp((ts-(Date.now()-45*60*1000))/(45*60*1000),0,1)*iw;
+  ctx.strokeStyle='#172131';ctx.lineWidth=1;ctx.font='9px -apple-system, sans-serif';ctx.fillStyle='#64758b'; for(let i=0;i<=4;i++){const y=pad.t+ih*i/4;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(pad.l+iw,y);ctx.stroke();const p=maxP-(maxP-minP)*i/4;ctx.fillText('$'+Math.round(p).toLocaleString(),pad.l+iw+5,y+3);}
+  const maxN=Math.max(1,...allWalls.map(x=>x.notional||0),...(metrics?.walls||[]).map(x=>x.notional||0));
+  // historical wall segments
+  for(let si=0;si<hist.length;si++){ const s=hist[si], x1=tx(s.ts), x2=tx(hist[si+1]?.ts||Date.now()); for(const wall of s.walls||[]){ if(wall.price<minP||wall.price>maxP) continue; const alpha=.16+.48*Math.sqrt(wall.notional/maxN); ctx.strokeStyle=wall.side==='sell'?`rgba(255,72,100,${alpha})`:`rgba(37,211,154,${alpha})`; ctx.lineWidth=1+4*Math.sqrt(wall.notional/maxN); ctx.beginPath();ctx.moveTo(x1,py(wall.price));ctx.lineTo(x2,py(wall.price));ctx.stroke(); } for(const wall of s.disappeared||[]){if(wall.price<minP||wall.price>maxP)continue;ctx.strokeStyle='rgba(160,91,108,.18)';ctx.lineWidth=1;ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(x1,py(wall.price));ctx.lineTo(x2,py(wall.price));ctx.stroke();ctx.setLineDash([]);} }
+  // price trace
+  const pts=whaleCandles(); if(pts.length){ctx.strokeStyle='#edf4ff';ctx.lineWidth=1.4;ctx.beginPath();pts.forEach((p,i)=>{const x=tx(p.ts),y=py(p.price);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y)});ctx.stroke();}
+  ctx.strokeStyle='#f0b84a';ctx.lineWidth=1;ctx.setLineDash([4,3]);ctx.beginPath();ctx.moveTo(pad.l,py(spot));ctx.lineTo(pad.l+iw,py(spot));ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='#f0b84a';ctx.fillText('現在 '+Math.round(spot).toLocaleString(),pad.l+4,py(spot)-5);
+}
+function renderWhaleOrderMap(){
+  const card=$('btcWhaleCard'); if(!card) return; if(state.asset.symbol!=='BTC'){card.classList.add('hidden');return;} card.classList.remove('hidden');
+  const m=whaleMetrics(); if(!m){setText('whalePressureBadge','取得中');setText('whaleBookAge','—');return;}
+  const fmt=(x)=>x?priceFmt(x.price):'—'; setText('whaleNearestSell',fmt(m.nearestSell)); setText('whaleNearestBuy',fmt(m.nearestBuy)); setText('whaleNearestSellMeta',m.nearestSell?`+${((m.nearestSell.price/m.spot-1)*100).toFixed(2)}% / ${money(m.nearestSell.notional)}`:'—'); setText('whaleNearestBuyMeta',m.nearestBuy?`${((m.nearestBuy.price/m.spot-1)*100).toFixed(2)}% / ${money(m.nearestBuy.notional)}`:'—'); setText('whaleSellTotal',money(m.sellTotal)); setText('whaleBuyTotal',money(m.buyTotal));
+  const total=m.sellTotal+m.buyTotal, sellPct=total?m.sellTotal/total:.5; const badge=$('whalePressureBadge'); let label='均衡',tone='neutral'; if(sellPct>=.62){label='売り壁優勢';tone='down';}else if(sellPct<=.38){label='買い壁優勢';tone='up';} if(badge){badge.textContent=label;badge.className=`signal-badge ${tone}`;} setText('whaleBookAge','LIVE L2');
+  let insight='大口板は拮抗しています。'; if(sellPct>=.62) insight=`上側の大口売り壁が優勢 (${(sellPct*100).toFixed(0)}%)。直上の壁で上値が抑えられるか、吸収して突破するかを監視。`; else if(sellPct<=.38) insight=`下側の大口買い壁が優勢 (${((1-sellPct)*100).toFixed(0)}%)。買い支えが維持されるか、壁の消失に注意。`; if(m.nearestSell&&Math.abs(m.nearestSell.price/m.spot-1)<.004) insight+=' 直上0.4%以内に大口売り壁あり。'; if(m.nearestBuy&&Math.abs(m.nearestBuy.price/m.spot-1)<.004) insight+=' 直下0.4%以内に大口買い壁あり。'; setText('whaleInsight',insight);
+  const list=$('whaleOrderList'); if(list){list.textContent=''; const top=[...m.walls].sort((a,b)=>b.notional-a.notional).slice(0,8), max=Math.max(1,...top.map(x=>x.notional)); for(const x of top){const row=document.createElement('div');row.className=`whale-order-row ${x.side}`;const p=document.createElement('b');p.textContent=priceFmt(x.price);const bar=document.createElement('div');bar.className='bar';const i=document.createElement('i');i.style.width=`${Math.max(4,100*x.notional/max)}%`;bar.appendChild(i);const val=document.createElement('strong');val.textContent=money(x.notional);const ds=document.createElement('small');const d=(x.price/m.spot-1)*100;ds.textContent=`${d>=0?'+':''}${d.toFixed(2)}%`;row.append(p,bar,val,ds);list.appendChild(row);} }
+  renderWhaleCanvas(m);
+}
 
 function sp500ChangeClass(v){
   if(!Number.isFinite(v)) return 'flat';
@@ -397,7 +468,13 @@ function sp500Analytics(data=state.sp500Map,withHistory=true){
       change15m={advPct:advPct-Number(old.advPct),health:healthScore-Number(old.health),capWeighted:Number.isFinite(capWeighted)?capWeighted-Number(old.capWeighted):NaN};
     }
   }
-  return {adv,dec,flat,total:valid.length,advPct,equalWeighted,capWeighted,capVsEqual,mega7,megaCount:megaMoves.length,sectorStats,positiveSectors,negativeSectors,sectorCount:sectorStats.length,sectorPct,healthScore,breadthRegime,concentration,change15m};
+  const sortedSectors=[...sectorStats].sort((a,b)=>b.change-a.change);
+  const strongestSector=sortedSectors[0]||null, weakestSector=sortedSectors[sortedSectors.length-1]||null;
+  const capContribution=(r)=>Number.isFinite(Number(r.marketCap))&&Number.isFinite(Number(r.change))?Number(r.marketCap)*Number(r.change):0;
+  const contributors=[...valid].sort((a,b)=>capContribution(b)-capContribution(a));
+  const topLeader=contributors[0]||null, topLaggard=contributors[contributors.length-1]||null;
+  const dispersion=Math.sqrt(valid.reduce((a,r)=>a+Math.pow(Number(r.change)-equalWeighted,2),0)/valid.length);
+  return {adv,dec,flat,total:valid.length,advPct,equalWeighted,capWeighted,capVsEqual,mega7,megaCount:megaMoves.length,sectorStats,positiveSectors,negativeSectors,sectorCount:sectorStats.length,sectorPct,healthScore,breadthRegime,concentration,change15m,strongestSector,weakestSector,topLeader,topLaggard,dispersion};
 }
 function renderSp500Command(){
   const card=$('sp500CommandCard');
@@ -407,6 +484,7 @@ function renderSp500Command(){
   if(!a){
     setText('sp500CommandAction','判定待ち'); setText('sp500CommandConfidence','信頼度 —'); setText('sp500HealthScore','—'); setText('sp500HealthLabel','取得中');
     setText('sp500AdvPct','—'); setText('sp500AdvMeta','—'); setText('sp500EqualWeighted','—'); setText('sp500WeightDivergence','—'); setText('sp500Mega7','—'); setText('sp500Mega7Meta','—'); setText('sp500PositiveSectors','—'); setText('sp500SectorMeta','—');
+    setText('sp500StrongSector','—'); setText('sp500StrongSectorMeta','—'); setText('sp500WeakSector','—'); setText('sp500WeakSectorMeta','—'); setText('sp500TopLeader','—'); setText('sp500TopLeaderMeta','—'); setText('sp500TopLaggard','—'); setText('sp500TopLaggardMeta','—'); setText('sp500RiskStrip','市場内部リスクを分析中');
     setText('sp500CommandAdvice','S&P 500構成銘柄データを取得後に総合判断します。');
     return;
   }
@@ -422,7 +500,18 @@ function renderSp500Command(){
   setText('sp500AdvPct',`${(a.advPct*100).toFixed(1)}%`); setText('sp500AdvMeta',`${a.adv}上昇 / ${a.dec}下落 / ${a.flat}横ばい`);
   setText('sp500EqualWeighted',`${a.equalWeighted>=0?'+':''}${a.equalWeighted.toFixed(2)}%`); setText('sp500WeightDivergence',Number.isFinite(a.capVsEqual)?`時価加重との差 ${a.capVsEqual>=0?'+':''}${a.capVsEqual.toFixed(2)}pt`:'—');
   setText('sp500Mega7',Number.isFinite(a.mega7)?`${a.mega7>=0?'+':''}${a.mega7.toFixed(2)}%`:'—'); setText('sp500Mega7Meta',`${a.megaCount}/7社取得`);
-  setText('sp500PositiveSectors',`${a.positiveSectors}/${a.sectorCount}`); setText('sp500SectorMeta',a.change15m?`健全度15分 ${a.change15m.health>=0?'+':''}${a.change15m.health}`:'15分履歴を蓄積中');
+  setText('sp500PositiveSectors',`${a.positiveSectors}/${a.sectorCount}`); setText('sp500SectorMeta',a.change15m?`健全度15分 ${a.change15m.health>=0?'+':''}${a.change15m.health}`:'TradingView業種分類');
+  setText('sp500StrongSector',a.strongestSector?.sector||'—'); setText('sp500StrongSectorMeta',a.strongestSector?`${a.strongestSector.change>=0?'+':''}${a.strongestSector.change.toFixed(2)}%`:'—');
+  setText('sp500WeakSector',a.weakestSector?.sector||'—'); setText('sp500WeakSectorMeta',a.weakestSector?`${a.weakestSector.change>=0?'+':''}${a.weakestSector.change.toFixed(2)}%`:'—');
+  setText('sp500TopLeader',a.topLeader?.ticker||'—'); setText('sp500TopLeaderMeta',a.topLeader?`${Number(a.topLeader.change)>=0?'+':''}${Number(a.topLeader.change).toFixed(2)}%`:'—');
+  setText('sp500TopLaggard',a.topLaggard?.ticker||'—'); setText('sp500TopLaggardMeta',a.topLaggard?`${Number(a.topLaggard.change)>=0?'+':''}${Number(a.topLaggard.change).toFixed(2)}%`:'—');
+  let risk='内部は概ね安定', riskTone='up';
+  if(a.advPct<0.45 && Number.isFinite(a.capWeighted) && a.capWeighted>0.15){ risk='指数上昇に対して参加率が低い：大型株依存に注意'; riskTone='down'; }
+  else if(Number.isFinite(a.capVsEqual) && a.capVsEqual>0.45){ risk='時価総額加重が等ウェイトを大幅上回る：大型株偏重'; riskTone='neutral'; }
+  else if(a.dispersion>2.2){ risk='銘柄間のばらつきが大きい：指数だけで判断しにくい'; riskTone='neutral'; }
+  else if(a.healthScore>=68 && a.advPct>=0.62){ risk='広い銘柄参加を伴う上昇：内部構造は良好'; riskTone='up'; }
+  else if(a.healthScore<=35 && a.advPct<=0.40){ risk='広範囲の下落：下方向リスクが高い'; riskTone='down'; }
+  const rs=$('sp500RiskStrip'); if(rs){rs.textContent=risk;rs.className=`sp500-risk-strip ${riskTone}`;}
 
   let advice=`${a.breadthRegime}。${a.concentration}です。`;
   if(a.healthScore>=65 && a.advPct>=0.60) advice+=' 上昇参加率が高く、指数上昇の中身も比較的強い状態です。';
@@ -1070,7 +1159,8 @@ window.addEventListener('offline',()=>setStatus('error','OFFLINE'));
 document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'){ connectWs(); fetchMeta(); fetchHeatmap(); fetchPositioning(); fetchOrderBook(); fetchSp500Map(); } });
 
 (async function init(){
-  renderAssetTabs(); updateAssetSpecificPanels(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderQuickView(); renderSp500Command(); renderRelaySettings();
+  state.whaleHistory=loadWhaleHistory();
+  renderAssetTabs(); updateAssetSpecificPanels(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderQuickView(); renderSp500Command(); renderWhaleOrderMap(); renderRelaySettings();
   connectWs(); setupTimers();
   await Promise.allSettled([fetchMeta(),fetchHeatmap(),fetchPositioning(),fetchOrderBook(),fetchSp500Map()]);
   if('serviceWorker' in navigator){
@@ -1081,4 +1171,4 @@ document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==
   }
 })();
 
-// LiqPulse v1.0.0
+// LiqPulse v1.1.0
