@@ -1,7 +1,7 @@
-// LiqPulse v0.7.0 — Cloudflare Worker relay
+// LiqPulse v0.8.0 — Cloudflare Worker relay
 // Public market data only. No API keys, cookies, or user data are forwarded.
 
-const ALLOWED_HEATMAP_SYMBOLS = new Set(['BTC', 'ETH', 'SOL']);
+const ALLOWED_HEATMAP_SYMBOLS = new Set(['BTC', 'ETH', 'SOL', 'XRP', 'ZEC']);
 const ALLOWED_POSITIONING_SYMBOLS = new Set(['BTC', 'ETH', 'SOL', 'XRP', 'ZEC']);
 const HEATMAP_UPSTREAM = 'https://trade.hyperperps.app/api/public/heatmap/';
 const BINANCE_FUTURES_DATA = 'https://fapi.binance.com/futures/data/';
@@ -135,7 +135,17 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === '/health') {
-      return Response.json({ ok: true, service: 'liqpulse-relay', version: '0.7.0' }, { headers });
+      return Response.json({ ok: true, service: 'liqpulse-relay', version: '0.8.0' }, { headers });
+    }
+
+    if (url.pathname === '/capabilities') {
+      return Response.json({
+        version: '0.8.0',
+        market: ['BTC','ETH','SOL','XRP','ZEC'],
+        heatmap: ['BTC','ETH','SOL','XRP','ZEC'],
+        positioning: ['BTC','ETH','SOL','XRP','ZEC'],
+        note: 'Heatmap availability depends on the upstream public source for each symbol.'
+      }, { headers });
     }
 
     const heatmapMatch = url.pathname.match(/^\/heatmap\/([A-Za-z0-9_-]+)$/);

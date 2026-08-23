@@ -25,8 +25,8 @@ const ASSETS = [
   { symbol:'BTC', name:'Bitcoin', heatmap:true, positioning:true },
   { symbol:'ETH', name:'Ethereum', heatmap:true, positioning:true },
   { symbol:'SOL', name:'Solana', heatmap:true, positioning:true },
-  { symbol:'XRP', name:'XRP', heatmap:false, positioning:true },
-  { symbol:'ZEC', name:'Zcash', heatmap:false, positioning:true },
+  { symbol:'XRP', name:'XRP', heatmap:true, positioning:true },
+  { symbol:'ZEC', name:'Zcash', heatmap:true, positioning:true },
 ];
 
 const state = {
@@ -237,9 +237,9 @@ async function fetchHeatmap(){
       renderHeatmap(); renderLiqBias(); renderPressure(); renderDecisionEngine(); return;
     }catch(err){ lastErr=err; console.warn('heatmap route failed',route.name,err); }
   }
-  state.heatmap=null; setText('statusHeatmap','取得失敗'); setText('statusHeatmapRoute',relayBase?'Relay / Direct失敗':'Relay未設定 / Direct失敗');
+  state.heatmap=null; setText('statusHeatmap','実データ未取得'); setText('statusHeatmapRoute',relayBase?'Relay / Direct確認済み':'Direct確認済み');
   console.warn('heatmap all routes failed',lastErr);
-  renderHeatmap(); renderLiqBias(); renderPressure();
+  renderHeatmap(); renderLiqBias(); renderRadar(); renderPressure(); renderDecisionEngine(); renderQuickView();
 }
 
 function normalizeHeatmap(raw){
@@ -419,7 +419,7 @@ function renderHeatmap(){
   const host=$('heatmap'), note=$('heatmapNotice'), summary=$('clusterSummary');
   host.textContent=''; note.classList.add('hidden'); summary.classList.add('hidden'); summary.textContent=''; renderRadar();
   if(!state.asset.heatmap){
-    note.textContent=`${state.asset.symbol}の実ポジション清算マップは現在未対応。価格・OI・Funding・Takerフローはリアルタイムです。`;
+    note.textContent=`${state.asset.symbol}の実清算クラスターは上流ソースから取得できませんでした。価格・OI・Funding・Taker・Long/Shortは引き続きリアルタイム表示します。`;
     note.classList.remove('hidden'); setText('heatmapAge','未対応'); return;
   }
   if(!state.heatmap?.levels?.length){
@@ -656,14 +656,14 @@ function renderQuickView(){
     setText('quickShortLine',priceFmt(radar.nearestShort.price));
     setText('quickShortLineMeta',`現在値から +${(ds*100).toFixed(2)}% / ${money(radar.nearestShort.notional)}`);
   }else{
-    setText('quickShortLine','—'); setText('quickShortLineMeta','取得待ち');
+    setText('quickShortLine','—'); setText('quickShortLineMeta',state.asset.heatmap?'実清算データ待ち':'清算ソース未対応');
   }
   if(radar?.nearestLong){
     const dl=Math.abs(distPct(radar.nearestLong.price,radar.spot));
     setText('quickLongLine',priceFmt(radar.nearestLong.price));
     setText('quickLongLineMeta',`現在値から -${(dl*100).toFixed(2)}% / ${money(radar.nearestLong.notional)}`);
   }else{
-    setText('quickLongLine','—'); setText('quickLongLineMeta','取得待ち');
+    setText('quickLongLine','—'); setText('quickLongLineMeta',state.asset.heatmap?'実清算データ待ち':'清算ソース未対応');
   }
 
   let advice='方向感は拮抗しています。無理なエントリーは避ける判定です。';
@@ -776,4 +776,4 @@ document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==
   }
 })();
 
-// LiqPulse v0.7.0
+// LiqPulse v0.8.0

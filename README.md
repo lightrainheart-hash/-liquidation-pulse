@@ -1,4 +1,24 @@
-# LiqPulse v0.7.0
+# LiqPulse v0.8.0
+
+BTC / ETH / SOL / XRP / ZEC を同一UI・同一分析パイプラインで扱うリアルタイム先物モニターです。
+
+## v0.8.0
+
+- BTC / ETH / SOL / XRP / ZEC を全面対応対象へ統一
+- 全5銘柄で価格、Mark、OI、Funding、Taker Buy/Sell、Long/Short Positioning、Market Bias Engine、AI Quick Viewを有効化
+- 清算クラスターも全5銘柄で実データ取得を試行
+- XRP / ZECを含め、上流のHyperPerps公開heatmapが返る場合はBTCと同じ清算Radar・クラスター・一次トリガー・最大クラスターを表示
+- 上流が対象銘柄の清算実データを提供しない場合、推定値を捏造せず「実清算データ未取得」と明示し、その他のリアルタイム分析は継続
+- ZECもBybit Linearの公開5分Long/Short比率フォールバック対象
+- Worker `/capabilities` を追加し、対応対象を確認可能
+- Worker `/health` は `0.8.0`
+
+## データの意味
+
+清算ラインは公開ソースで取得できた実ポジション由来データのみを表示します。取得できない銘柄に仮想の清算価格を作ることはしません。AI Quick Viewは清算データがない場合でも、Taker、L/S、Funding、OI、価格変化を使って方向判定を継続します。
+
+
+## Previous notes
 
 iPhone Safari/PWA向けの分析専用リアルタイム先物モニターです。注文機能はありません。
 
