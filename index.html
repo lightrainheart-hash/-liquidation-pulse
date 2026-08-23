@@ -10,13 +10,13 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="apple-touch-icon" href="./icon-180.png" />
   <link rel="stylesheet" href="./styles.css" />
-  <title>LiqPulse v0.5.2</title>
+  <title>LiqPulse v0.6.0</title>
 </head>
 <body>
   <main class="app-shell">
     <header class="topbar">
       <div>
-        <div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v0.5.2</span></div>
+        <div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v0.6.0</span></div>
         <h1>LiqPulse</h1>
       </div>
       <div id="connBadge" class="status offline"><span></span><b>接続中</b></div>
@@ -37,6 +37,26 @@
       <button id="refreshBtn" class="icon-btn" aria-label="更新">↻</button>
     </section>
 
+
+    <section class="card engine-card">
+      <div class="section-head">
+        <div>
+          <div class="card-title">Market Bias Engine</div>
+          <div class="subtitle">清算・Taker・L/S・Funding・OIを統合した補助スコア</div>
+        </div>
+        <div class="engine-badges"><span id="engineLabel" class="signal-badge neutral">分析中</span><span id="engineConfidence" class="pill">信頼度 —</span></div>
+      </div>
+      <div class="engine-score-row"><div><span>上方向</span><b id="engineUp" class="green">50</b></div><div><span>下方向</span><b id="engineDown" class="red">50</b></div></div>
+      <div class="ratio engine-ratio"><i id="engineUpBar" style="width:50%"></i><i id="engineDownBar" style="width:50%"></i></div>
+      <ul id="engineReasons" class="engine-reasons"><li>データ取得中…</li></ul>
+      <div class="market-state-grid">
+        <div><span>OI 15分</span><b id="oi15m">—</b></div>
+        <div><span>価格 15分</span><b id="price15m">—</b></div>
+        <div><span>Funding状態</span><b id="fundingState">—</b></div>
+        <div><span>L/S Source</span><b id="positionSource">—</b></div>
+      </div>
+      <div class="hint">方向スコアは市場構造の偏りをまとめた補助指標で、将来価格や到達を保証する予測ではありません。</div>
+    </section>
 
     <section class="card decision-card">
       <div class="section-head">
@@ -190,9 +210,9 @@
     </section>
 
     <footer>
-      分析専用・注文機能なし。清算クラスターは価格到達を保証しません。Long/Short統計はBinance USDⓈ-M公開統計で、Hyperliquid建玉比率ではありません。BTC/ETH/SOL清算データはHyperPerps公開APIをRelay経由で取得できます。
+      分析専用・注文機能なし。清算クラスターは価格到達を保証しません。Long/Short統計はBinance/Bybitの公開統計で、Hyperliquid建玉比率ではありません。BTC/ETH/SOL清算データはHyperPerps公開APIをRelay経由で取得できます。
     </footer>
   </main>
-  <script src="./app.js?v=0.5.0" defer></script>
+  <script src="./app.js?v=0.6.0" defer></script>
 </body>
 </html>

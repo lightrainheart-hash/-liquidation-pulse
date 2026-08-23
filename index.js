@@ -1,4 +1,4 @@
-// LiqPulse v0.5.2 — Cloudflare Worker relay
+// LiqPulse v0.6.0 — Cloudflare Worker relay
 // Public market data only. No API keys, cookies, or user data are forwarded.
 
 const ALLOWED_HEATMAP_SYMBOLS = new Set(['BTC', 'ETH', 'SOL']);
@@ -135,7 +135,7 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === '/health') {
-      return Response.json({ ok: true, service: 'liqpulse-relay', version: '0.5.2' }, { headers });
+      return Response.json({ ok: true, service: 'liqpulse-relay', version: '0.6.0' }, { headers });
     }
 
     const heatmapMatch = url.pathname.match(/^\/heatmap\/([A-Za-z0-9_-]+)$/);

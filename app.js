@@ -17,6 +17,8 @@ const CONFIG = {
   liqBiasRangePct: 0.10,
   radarRangePct: 0.05,
   snapshotRetentionMs: 6 * 60 * 60 * 1000,
+  marketSnapshotMinMs: 45000,
+  decisionLookbackMs: 15 * 60 * 1000,
 };
 
 const ASSETS = [
@@ -41,6 +43,7 @@ const state = {
   timers:[],
   switching:false,
   lastWsAt:0,
+  decision:null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -80,7 +83,7 @@ async function switchAsset(symbol){
   state.switching=true;
   state.asset=ASSETS.find(x=>x.symbol===symbol)||ASSETS[0];
   state.tradeEvents=[]; state.heatmap=null; state.positioning=null; state.latestPrice=null;
-  renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderRelaySettings();
+  renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderRelaySettings();
   connectWs(true);
   await Promise.allSettled([fetchMeta(), fetchHeatmap(), fetchPositioning()]);
   state.switching=false;
@@ -93,6 +96,37 @@ function renderBase(){
   setText('markPx',c?priceFmt(c.markPx):'—');
   setText('openInterest',c?money(c.openInterestUsd):'—');
   setText('funding',c?pct(c.funding,4):'—');
+}
+
+
+function marketSnapshotKey(symbol){ return `liqpulse_market_snapshots_${symbol}`; }
+function loadMarketSnapshots(symbol){
+  try{
+    const raw=JSON.parse(localStorage.getItem(marketSnapshotKey(symbol))||'[]');
+    const cutoff=Date.now()-CONFIG.snapshotRetentionMs;
+    return Array.isArray(raw)?raw.filter(x=>Number(x?.ts)>=cutoff):[];
+  }catch{return []}
+}
+function saveMarketSnapshot(symbol,ctx,price){
+  if(!ctx || !Number.isFinite(ctx.openInterestUsd)) return;
+  const list=loadMarketSnapshots(symbol), now=Date.now(), last=list[list.length-1];
+  if(last && now-last.ts<CONFIG.marketSnapshotMinMs) return;
+  list.push({ts:now,oi:ctx.openInterestUsd,price:Number.isFinite(price)?price:ctx.markPx,funding:ctx.funding});
+  try{localStorage.setItem(marketSnapshotKey(symbol),JSON.stringify(list.slice(-360)));}catch{}
+}
+function previousMarketSnapshot(symbol,lookbackMs=CONFIG.decisionLookbackMs){
+  const list=loadMarketSnapshots(symbol); if(!list.length) return null;
+  const target=Date.now()-lookbackMs; let best=null,delta=Infinity;
+  for(const x of list){ const d=Math.abs(x.ts-target); if(d<delta){delta=d;best=x;} }
+  return best && delta<=10*60*1000 ? best : null;
+}
+function marketMomentum(){
+  const ctx=state.ctxByCoin.get(state.asset.symbol), spot=state.latestPrice||ctx?.markPx;
+  if(!ctx||!Number.isFinite(ctx.openInterestUsd)||!Number.isFinite(spot)) return null;
+  const prev=previousMarketSnapshot(state.asset.symbol); if(!prev) return {oiChange:null,priceChange:null};
+  const oiChange=prev.oi>0?(ctx.openInterestUsd-prev.oi)/prev.oi:null;
+  const priceChange=prev.price>0?(spot-prev.price)/prev.price:null;
+  return {oiChange,priceChange};
 }
 
 async function fetchMeta(){
@@ -109,8 +143,9 @@ async function fetchMeta(){
     });
     const c=state.ctxByCoin.get(state.asset.symbol);
     if(c && !state.latestPrice) state.latestPrice=c.markPx;
+    if(c) saveMarketSnapshot(state.asset.symbol,c,state.latestPrice||c.markPx);
     setText('statusInfo','正常');
-    renderBase(); renderPressure();
+    renderBase(); renderPressure(); renderDecisionEngine();
   }catch(err){
     console.warn('meta',err); setText('statusInfo','取得失敗');
   }
@@ -132,7 +167,7 @@ function connectWs(force=false){
     if(msg.channel==='trades' && Array.isArray(msg.data)) ingestTrades(msg.data);
     if(msg.channel==='allMids' && msg.data?.mids){
       const p=Number(msg.data.mids[state.asset.symbol]);
-      if(Number.isFinite(p)){ state.latestPrice=p; setText('price',priceFmt(p)); renderHeatmap(); renderLiqBias(); renderPressure(); renderRadar(); }
+      if(Number.isFinite(p)){ state.latestPrice=p; setText('price',priceFmt(p)); renderHeatmap(); renderLiqBias(); renderPressure(); renderRadar(); renderDecisionEngine(); }
     }
   };
   ws.onerror=()=>setStatus('error','再接続');
@@ -153,7 +188,7 @@ function ingestTrades(trades){
     state.latestPrice=px;
   }
   state.tradeEvents=state.tradeEvents.filter(x=>x.ts>=now-CONFIG.maxTradeWindowMs);
-  renderFlow(); renderBase(); renderPressure();
+  renderFlow(); renderBase(); renderPressure(); renderDecisionEngine();
 }
 
 function flowTotals(windowMs=state.flowWindowMs){
@@ -199,7 +234,7 @@ async function fetchHeatmap(){
       state.heatmap=normalized;
       saveHeatmapSnapshot();
       setText('statusHeatmap','正常'); setText('statusHeatmapRoute',route.name);
-      renderHeatmap(); renderLiqBias(); renderPressure(); return;
+      renderHeatmap(); renderLiqBias(); renderPressure(); renderDecisionEngine(); return;
     }catch(err){ lastErr=err; console.warn('heatmap route failed',route.name,err); }
   }
   state.heatmap=null; setText('statusHeatmap','取得失敗'); setText('statusHeatmapRoute',relayBase?'Relay / Direct失敗':'Relay未設定 / Direct失敗');
@@ -476,14 +511,14 @@ async function fetchPositioning(){
     const topPositions=normalizeRatioPoint(raw?.topPositions);
     if(!global&&!topAccounts&&!topPositions) throw new Error(raw?.error||'No ratio data');
     state.positioning={global,topAccounts,topPositions,sources:raw?.sources||{},timestamp:Number(raw?.timestamp)||Date.now(),errors:raw?.errors||[]};
-    setText('statusPositioning','正常'); renderPositioning(); renderPressure();
+    setText('statusPositioning','正常'); renderPositioning(); renderPressure(); renderDecisionEngine();
   }catch(err){
-    console.warn('positioning',err); state.positioning=null; setText('statusPositioning','取得失敗'); renderPositioning(); renderPressure();
+    console.warn('positioning',err); state.positioning=null; setText('statusPositioning','取得失敗'); renderPositioning(); renderPressure(); renderDecisionEngine();
   }
 }
 function setRatioView(prefix,point){
   const l=$(prefix+'Long'), s=$(prefix+'Short'), lb=$(prefix+'LongBar'), sb=$(prefix+'ShortBar'), r=$(prefix+'Ratio');
-  if(!point){ if(l)l.textContent='—'; if(s)s.textContent='—'; if(r)r.textContent='L/S —'; if(lb)lb.style.width='50%'; if(sb)sb.style.width='50%'; return; }
+  if(!point){ if(l)l.textContent='取得不可'; if(s)s.textContent=''; if(r)r.textContent='L/S —'; if(lb)lb.style.width='50%'; if(sb)sb.style.width='50%'; return; }
   if(l)l.textContent=(point.long*100).toFixed(1)+'%'; if(s)s.textContent=(point.short*100).toFixed(1)+'%';
   if(r)r.textContent=`L/S ${Number.isFinite(point.ratio)?point.ratio.toFixed(2):'∞'}`;
   if(lb)lb.style.width=(point.long*100)+'%'; if(sb)sb.style.width=(point.short*100)+'%';
@@ -513,6 +548,83 @@ function renderPositioning(){
   }
 }
 
+
+function decisionMetrics(){
+  const flowRaw=flowTotals(), flow=flowRaw.total?flowRaw.buy/flowRaw.total:0.5;
+  const liq=liquidationBias();
+  const pos=state.positioning?.topPositions || state.positioning?.global || null;
+  const ctx=state.ctxByCoin.get(state.asset.symbol);
+  const funding=Number(ctx?.funding)||0;
+  const mm=marketMomentum();
+  const radar=radarMetrics();
+
+  // Score = probability-like directional pressure index, not a price forecast.
+  let up=50, weight=0, used=[];
+  if(liq){ up += (liq.shortPct-.5)*44; weight+=30; used.push('清算偏り'); }
+  if(flowRaw.total>0){ up += (flow-.5)*28; weight+=25; used.push('Taker'); }
+  if(pos){
+    // Crowded shorts can fuel an upside squeeze; crowded longs can fuel downside liquidation.
+    up += (pos.short-pos.long)*24; weight+=20; used.push('L/S');
+  }
+  if(Number.isFinite(funding)){
+    // Positive funding = longs pay shorts, so extreme positive funding is a mild downside-risk input.
+    up -= clamp(funding*10000,-1,1)*6; weight+=10; used.push('Funding');
+  }
+  if(mm && Number.isFinite(mm.oiChange) && Number.isFinite(mm.priceChange)){
+    const oiStrength=clamp(Math.abs(mm.oiChange)/0.02,0,1);
+    if(mm.oiChange>0){ up += Math.sign(mm.priceChange||0)*6*oiStrength; }
+    weight+=10; used.push('OI変化');
+  }
+  if(radar?.nearestShort && radar?.nearestLong){
+    const su=Math.abs(distPct(radar.nearestShort.price,radar.spot));
+    const ld=Math.abs(distPct(radar.nearestLong.price,radar.spot));
+    const sFuel=radar.nearestShort.notional/Math.max(su,0.0005);
+    const lFuel=radar.nearestLong.notional/Math.max(ld,0.0005);
+    const sum=sFuel+lFuel;
+    if(sum>0) up += ((sFuel/sum)-.5)*10;
+    weight+=5; used.push('最寄り清算');
+  }
+  up=clamp(up,0,100); const down=100-up;
+  const spread=Math.abs(up-50)*2;
+  const completeness=clamp(weight/100,0,1);
+  const confidence=Math.round(clamp(spread*0.65 + completeness*35,0,100));
+  let label='中立', tone='neutral';
+  if(up>=62){label='上方向スクイーズ警戒';tone='up';}
+  else if(up>=55){label='やや上方向';tone='up';}
+  else if(up<=38){label='下方向カスケード警戒';tone='down';}
+  else if(up<=45){label='やや下方向';tone='down';}
+
+  const reasons=[];
+  if(liq){
+    reasons.push(liq.shortPct>liq.longPct
+      ? `上側の距離加重清算が優勢 (${(liq.shortPct*100).toFixed(0)}%)`
+      : `下側の距離加重清算が優勢 (${(liq.longPct*100).toFixed(0)}%)`);
+  }
+  if(flowRaw.total>0){ reasons.push(`Takerは ${flow>=.5?'買い':'売り'} ${(Math.max(flow,1-flow)*100).toFixed(0)}%`); }
+  if(pos){ reasons.push(`全口座L/S ${pos.ratio.toFixed(2)} (${pos.long>.5?'Long':'Short'} ${(Math.max(pos.long,pos.short)*100).toFixed(1)}%)`); }
+  if(mm && Number.isFinite(mm.oiChange)){
+    reasons.push(`OI 15分 ${mm.oiChange>=0?'+':''}${(mm.oiChange*100).toFixed(2)}%${Number.isFinite(mm.priceChange)?` / 価格 ${mm.priceChange>=0?'+':''}${(mm.priceChange*100).toFixed(2)}%`:''}`);
+  }
+  return {up,down,confidence,label,tone,reasons:reasons.slice(0,4),used,mm};
+}
+function renderDecisionEngine(){
+  const d=decisionMetrics(); state.decision=d;
+  if(!d) return;
+  setText('engineUp',Math.round(d.up)); setText('engineDown',Math.round(d.down));
+  $('engineUpBar').style.width=d.up+'%'; $('engineDownBar').style.width=d.down+'%';
+  setText('engineLabel',d.label); setText('engineConfidence',`信頼度 ${d.confidence}%`);
+  const badge=$('engineLabel'); if(badge) badge.className=`signal-badge ${d.tone}`;
+  const reasons=$('engineReasons');
+  if(reasons){ reasons.textContent=''; d.reasons.forEach(x=>{const li=document.createElement('li');li.textContent=x;reasons.appendChild(li);}); }
+  const mm=d.mm;
+  setText('oi15m',mm&&Number.isFinite(mm.oiChange)?`${mm.oiChange>=0?'+':''}${(mm.oiChange*100).toFixed(2)}%`:'—');
+  setText('price15m',mm&&Number.isFinite(mm.priceChange)?`${mm.priceChange>=0?'+':''}${(mm.priceChange*100).toFixed(2)}%`:'—');
+  const f=Number(state.ctxByCoin.get(state.asset.symbol)?.funding);
+  let fs='中立'; if(Number.isFinite(f)){ if(f>0.0001) fs='Long過熱寄り'; else if(f<-0.0001) fs='Short過熱寄り'; }
+  setText('fundingState',fs);
+  setText('positionSource',state.positioning?.sources?.global||'—');
+}
+
 function renderPressure(){
   const f=flowTotals(); const flow=f.total?f.buy/f.total:0.5;
   const funding=state.ctxByCoin.get(state.asset.symbol)?.funding || 0;
@@ -536,7 +648,7 @@ function setupTimers(){
   state.timers.push(setInterval(fetchPositioning,CONFIG.positioningPollMs));
   state.timers.push(setInterval(()=>{
     state.tradeEvents=state.tradeEvents.filter(x=>x.ts>=Date.now()-CONFIG.maxTradeWindowMs);
-    renderFlow(); renderPressure();
+    renderFlow(); renderPressure(); renderDecisionEngine();
     if(Date.now()-state.lastWsAt>CONFIG.wsStaleMs && state.ws?.readyState===1){ try{state.ws.close();}catch{} }
   },5000));
 }
@@ -585,7 +697,7 @@ window.addEventListener('offline',()=>setStatus('error','OFFLINE'));
 document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'){ connectWs(); fetchMeta(); fetchHeatmap(); fetchPositioning(); } });
 
 (async function init(){
-  renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderRelaySettings();
+  renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderRelaySettings();
   connectWs(); setupTimers();
   await Promise.allSettled([fetchMeta(),fetchHeatmap(),fetchPositioning()]);
   if('serviceWorker' in navigator){
@@ -595,3 +707,5 @@ document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==
     }catch(err){ console.warn('service worker',err); }
   }
 })();
+
+// LiqPulse v0.6.0

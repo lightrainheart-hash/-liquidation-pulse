@@ -1,4 +1,4 @@
-# LiqPulse v0.5.2
+# LiqPulse v0.6.0
 
 iPhone Safari/PWA向けの分析専用リアルタイム先物モニターです。注文機能はありません。
 
@@ -50,15 +50,23 @@ Cloudflareで既存Worker `liqpulse-relay` → Settings → Builds → Connect �
 Long/Short統計はBinance USDⓈ-Mの公開市場統計であり、Hyperliquid全体の建玉比率ではありません。
 
 
-## v0.5.2
+## v0.6.0
 
 - Long/Short Positioning: BinanceをPrimary、Bybit Linearを全口座比率のFallbackとして追加。
 - BinanceがCloudflare経由で拒否された場合でもBybit `GET /v5/market/account-ratio` の5分統計を利用。
 - データソースを画面下に明示し、Top Traderが取得できない場合は欠損を明示。
 
-## v0.5.2 deployment hardening
+## v0.6.0 deployment hardening
 
 - `relay-worker.js` is the canonical Cloudflare Worker entry point.
 - `index.js` contains the same Worker source as a non-empty backup.
 - `wrangler.jsonc` points directly to `relay-worker.js`.
 - The duplicate `worker/` folder was removed to avoid iPhone/GitHub upload name collisions.
+
+
+## v0.6.0
+- Market Bias Engine: liquidation / taker / public L-S / funding / OI momentum composite
+- 15-minute OI and price momentum stored locally on the iPhone
+- Data-confidence indicator and concise reason list
+- Clearer handling when Binance Top Trader data is unavailable
+- No order execution; analysis-only
