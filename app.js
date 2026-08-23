@@ -12,6 +12,7 @@ const CONFIG = {
   heatmapPollMs: 60000,
   positioningPollMs: 60000,
   orderBookPollMs: 15000,
+  sp500MapPollMs: 120000,
   relayTimeoutMs: 10000,
   maxTradeWindowMs: 60 * 60 * 1000,
   wsStaleMs: 15000,
@@ -45,6 +46,8 @@ const state = {
   heatmap:null,
   positioning:null,
   orderbook:null,
+  sp500Map:null,
+  sp500MapLimit:80,
   timers:[],
   switching:false,
   lastWsAt:0,
@@ -94,10 +97,10 @@ async function switchAsset(symbol){
   if(state.switching || symbol===state.asset.symbol) return;
   state.switching=true;
   state.asset=ASSETS.find(x=>x.symbol===symbol)||ASSETS[0];
-  state.tradeEvents=[]; state.heatmap=null; state.positioning=null; state.orderbook=null; state.latestPrice=null;
+  state.tradeEvents=[]; state.heatmap=null; state.positioning=null; state.orderbook=null; state.sp500Map=null; state.latestPrice=null;
   renderAssetTabs(); updateAssetSpecificPanels(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderQuickView(); renderRelaySettings();
   connectWs(true);
-  await Promise.allSettled([fetchMeta(), fetchHeatmap(), fetchPositioning(), fetchOrderBook()]);
+  await Promise.allSettled([fetchMeta(), fetchHeatmap(), fetchPositioning(), fetchOrderBook(), fetchSp500Map()]);
   state.switching=false;
 }
 
@@ -290,6 +293,52 @@ function estimatedTriggerZones(){
   const bidTotal=ob.bids.slice(0,10).reduce((a,x)=>a+x.notional,0), askTotal=ob.asks.slice(0,10).reduce((a,x)=>a+x.notional,0);
   const total=bidTotal+askTotal;
   return {up,down,bidTotal,askTotal,bidPct:total?bidTotal/total:.5,askPct:total?askTotal/total:.5};
+}
+
+
+function sp500ChangeClass(v){
+  if(!Number.isFinite(v)) return 'flat';
+  if(v>=2) return 'up5'; if(v>=1) return 'up4'; if(v>=0.5) return 'up3'; if(v>=0.15) return 'up2'; if(v>0.02) return 'up1';
+  if(v<=-2) return 'down5'; if(v<=-1) return 'down4'; if(v<=-0.5) return 'down3'; if(v<=-0.15) return 'down2'; if(v<-0.02) return 'down1';
+  return 'flat';
+}
+function renderSp500Map(){
+  const grid=$('sp500MapGrid'); if(!grid) return;
+  grid.textContent='';
+  if(state.asset.symbol!=='SP500') return;
+  const data=state.sp500Map;
+  if(!data?.rows?.length){
+    const d=document.createElement('div'); d.className='sp500-map-error'; d.textContent='S&P 500構成銘柄データを取得できません。数分後に再取得します。'; grid.appendChild(d);
+    setText('sp500MapStatus','取得待ち'); setText('sp500Mood','—'); setText('sp500Breadth','—'); setText('sp500Weighted','—'); return;
+  }
+  const rows=data.rows.slice(0,state.sp500MapLimit||80);
+  const adv=Number(data.summary?.advancers)||0, dec=Number(data.summary?.decliners)||0, flat=Number(data.summary?.unchanged)||0;
+  const weighted=Number(data.summary?.capWeightedChange);
+  let mood='均衡'; if(Number.isFinite(weighted)){ if(weighted>=0.7) mood='強い上昇'; else if(weighted>=0.2) mood='上昇優勢'; else if(weighted<=-0.7) mood='強い下落'; else if(weighted<=-0.2) mood='下落優勢'; }
+  setText('sp500Mood',mood); setText('sp500Breadth',`${adv} / ${dec}${flat?` / ${flat}`:''}`); setText('sp500Weighted',Number.isFinite(weighted)?`${weighted>=0?'+':''}${weighted.toFixed(2)}%`:'—');
+  const age=Math.max(0,Math.round((Date.now()-Number(data.timestamp||Date.now()))/1000)); setText('sp500MapStatus',`${data.rows.length}銘柄 / ${age<60?'更新直後':Math.round(age/60)+'分前'}`);
+  const groups=new Map();
+  for(const r of rows){ const sec=r.sector||'Other'; if(!groups.has(sec)) groups.set(sec,[]); groups.get(sec).push(r); }
+  const sorted=[...groups.entries()].sort((a,b)=>b[1].reduce((x,r)=>x+(Number(r.marketCap)||0),0)-a[1].reduce((x,r)=>x+(Number(r.marketCap)||0),0));
+  for(const [sector,list] of sorted){
+    const cap=list.reduce((a,r)=>a+(Number(r.marketCap)||0),0); const w=cap?list.reduce((a,r)=>a+(Number(r.marketCap)||0)*Number(r.change||0),0)/cap:0;
+    const sec=document.createElement('section'); sec.className='map-sector';
+    const head=document.createElement('div'); head.className='map-sector-head'; const hb=document.createElement('b'); hb.textContent=sector; const hs=document.createElement('span'); hs.textContent=`${w>=0?'+':''}${w.toFixed(2)}%`; hs.className=w>0.02?'green':w<-0.02?'red':''; head.append(hb,hs); sec.appendChild(head);
+    const tiles=document.createElement('div'); tiles.className='map-sector-tiles';
+    list.forEach((r,i)=>{ const t=document.createElement('div'); const rank=Number(r.rank)||999; t.className=`map-tile ${sp500ChangeClass(Number(r.change))} ${rank<=10?'rank-xl':rank<=35?'rank-lg':'rank-md'}`; t.title=`${r.ticker} ${r.description||''} ${Number(r.change)>=0?'+':''}${Number(r.change).toFixed(2)}%`; const b=document.createElement('b'); b.textContent=r.ticker; const sm=document.createElement('small'); const ch=Number(r.change); sm.textContent=Number.isFinite(ch)?`${ch>=0?'+':''}${ch.toFixed(2)}%`:'—'; t.append(b,sm); tiles.appendChild(t); });
+    sec.appendChild(tiles); grid.appendChild(sec);
+  }
+}
+async function fetchSp500Map(){
+  if(state.asset.symbol!=='SP500'){ state.sp500Map=null; renderSp500Map(); return; }
+  const relayBase=(CONFIG.relayBase||'').replace(/\/$/,'');
+  if(!relayBase){ renderSp500Map(); return; }
+  setText('sp500MapStatus','市場データ取得中');
+  try{
+    const raw=await fetchJsonWithTimeout(`${relayBase}/sp500-map`,CONFIG.relayTimeoutMs+5000);
+    if(raw?.error || !Array.isArray(raw?.rows)) throw new Error(raw?.error||'invalid map response');
+    state.sp500Map=raw; renderSp500Map();
+  }catch(err){ console.warn('sp500-map',err); state.sp500Map=null; renderSp500Map(); }
 }
 
 async function fetchHeatmap(){
@@ -816,6 +865,7 @@ function setupTimers(){
   state.timers.push(setInterval(fetchHeatmap,CONFIG.heatmapPollMs));
   state.timers.push(setInterval(fetchPositioning,CONFIG.positioningPollMs));
   state.timers.push(setInterval(fetchOrderBook,CONFIG.orderBookPollMs));
+  state.timers.push(setInterval(fetchSp500Map,CONFIG.sp500MapPollMs));
   state.timers.push(setInterval(()=>{
     state.tradeEvents=state.tradeEvents.filter(x=>x.ts>=Date.now()-CONFIG.maxTradeWindowMs);
     renderFlow(); renderPressure(); renderDecisionEngine();
@@ -857,19 +907,20 @@ function clearRelay(){
   const msg=$('relayTestResult'); if(msg) msg.textContent='標準Relay URLに戻しました。';
 }
 
-$('refreshBtn').addEventListener('click',()=>Promise.allSettled([fetchMeta(),fetchHeatmap(),fetchPositioning(),fetchOrderBook()]));
+$('refreshBtn').addEventListener('click',()=>Promise.allSettled([fetchMeta(),fetchHeatmap(),fetchPositioning(),fetchOrderBook(),fetchSp500Map()]));
 $('testRelayBtn')?.addEventListener('click',testRelay);
 $('clearRelayBtn')?.addEventListener('click',clearRelay);
 $('flowWindow').addEventListener('change',(e)=>{ state.flowWindowMs=Number(e.target.value)||300000; renderFlow(); renderPressure(); });
 $('clusterDepth')?.addEventListener('change',(e)=>{ state.clusterDepth=Number(e.target.value)||8; renderHeatmap(); });
-window.addEventListener('online',()=>{connectWs(true); fetchMeta(); fetchHeatmap(); fetchPositioning(); fetchOrderBook();});
+$('sp500MapLimit')?.addEventListener('change',(e)=>{ state.sp500MapLimit=Number(e.target.value)||80; renderSp500Map(); });
+window.addEventListener('online',()=>{connectWs(true); fetchMeta(); fetchHeatmap(); fetchPositioning(); fetchOrderBook(); fetchSp500Map();});
 window.addEventListener('offline',()=>setStatus('error','OFFLINE'));
-document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'){ connectWs(); fetchMeta(); fetchHeatmap(); fetchPositioning(); fetchOrderBook(); } });
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'){ connectWs(); fetchMeta(); fetchHeatmap(); fetchPositioning(); fetchOrderBook(); fetchSp500Map(); } });
 
 (async function init(){
   renderAssetTabs(); updateAssetSpecificPanels(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderQuickView(); renderRelaySettings();
   connectWs(); setupTimers();
-  await Promise.allSettled([fetchMeta(),fetchHeatmap(),fetchPositioning(),fetchOrderBook()]);
+  await Promise.allSettled([fetchMeta(),fetchHeatmap(),fetchPositioning(),fetchOrderBook(),fetchSp500Map()]);
   if('serviceWorker' in navigator){
     try{
       const reg=await navigator.serviceWorker.register('./sw.js');

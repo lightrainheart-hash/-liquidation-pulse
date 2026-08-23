@@ -9,6 +9,7 @@ const HYPERLIQUID_INFO='https://api.hyperliquid.xyz/info';
 const HEATMAP_UPSTREAM = 'https://trade.hyperperps.app/api/public/heatmap/';
 const BINANCE_FUTURES_DATA = 'https://fapi.binance.com/futures/data/';
 const BYBIT_V5 = 'https://api.bybit.com/v5/market/account-ratio';
+const TRADINGVIEW_SCAN = 'https://scanner.tradingview.com/global/scan';
 const ALLOWED_ORIGINS = new Set([
   'https://lightrainheart-hash.github.io',
 ]);
@@ -138,17 +139,18 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === '/health') {
-      return Response.json({ ok: true, service: 'liqpulse-relay', version: '0.9.1' }, { headers });
+      return Response.json({ ok: true, service: 'liqpulse-relay', version: '0.9.2' }, { headers });
     }
 
     if (url.pathname === '/capabilities') {
       return Response.json({
-        version: '0.9.1',
+        version: '0.9.2',
         market: ['BTC','ETH','SOL','XRP','ZEC','SP500','GOLD','SILVER'],
         heatmap: ['BTC','ETH','SOL','XRP','ZEC'],
         positioning: ['BTC','ETH','SOL','XRP','ZEC'],
         orderBook: ['BTC','ETH','SOL','XRP','ZEC','SP500','GOLD','SILVER'],
         hip3: ['xyz:SP500','xyz:GOLD','xyz:SILVER'],
+        sp500Map: true,
         note: 'Heatmap availability depends on the upstream public source for each symbol.'
       }, { headers });
     }
@@ -174,6 +176,40 @@ export default {
       }
     }
 
+
+
+    if (url.pathname === '/sp500-map') {
+      try {
+        const columns=['name','description','close','change','market_cap_basic','sector'];
+        const payload={
+          preset:'index_components_market_pages',
+          symbols:{symbolset:['SYML:SP;SPX']},
+          columns,
+          sort:{sortBy:'market_cap_basic',sortOrder:'desc'},
+          range:[0,550]
+        };
+        const upstream=await fetch(TRADINGVIEW_SCAN,{
+          method:'POST',
+          headers:{'content-type':'application/json','accept':'application/json','user-agent':'Mozilla/5.0','origin':'https://www.tradingview.com','referer':'https://www.tradingview.com/'},
+          body:JSON.stringify(payload)
+        });
+        const text=await upstream.text();
+        if(!upstream.ok) return Response.json({error:'sp500_map_upstream_http',status:upstream.status,body:text.slice(0,180)},{status:502,headers});
+        let raw; try{raw=JSON.parse(text);}catch{return Response.json({error:'sp500_map_non_json'},{status:502,headers});}
+        const rows=(Array.isArray(raw?.data)?raw.data:[]).map((item,idx)=>{
+          const d=Array.isArray(item?.d)?item.d:[];
+          const ticker=String(item?.s||'').split(':').pop();
+          return {rank:idx+1,symbol:String(item?.s||''),ticker,name:d[0]||ticker,description:d[1]||'',close:Number(d[2]),change:Number(d[3]),marketCap:Number(d[4]),sector:d[5]||'Other'};
+        }).filter(r=>r.ticker && Number.isFinite(r.change));
+        if(!rows.length) return Response.json({error:'sp500_map_empty'},{status:502,headers});
+        const advancers=rows.filter(r=>r.change>0.02).length, decliners=rows.filter(r=>r.change<-0.02).length, unchanged=rows.length-advancers-decliners;
+        const cap=rows.reduce((a,r)=>a+(Number.isFinite(r.marketCap)&&r.marketCap>0?r.marketCap:0),0);
+        const capWeightedChange=cap?rows.reduce((a,r)=>a+(Number.isFinite(r.marketCap)&&r.marketCap>0?r.marketCap:0)*r.change,0)/cap:null;
+        return Response.json({source:'TradingView public screener',delayed:true,timestamp:Date.now(),totalCount:Number(raw?.totalCount)||rows.length,rows,summary:{advancers,decliners,unchanged,capWeightedChange}}, {headers:{...headers,'Cache-Control':'public, max-age=60'}});
+      } catch(error) {
+        return Response.json({error:'sp500_map_upstream_failed',message:String(error?.message||error)},{status:502,headers});
+      }
+    }
 
     const marketMatch = url.pathname.match(/^\/market\/([A-Za-z0-9_-]+)$/);
     if (marketMatch) {

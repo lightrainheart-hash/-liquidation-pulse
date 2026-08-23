@@ -70,9 +70,27 @@
 .engine-card{margin-top:4px;opacity:.96}
 @media(max-width:560px){.quick-primary,.quick-liq-grid{grid-template-columns:1fr 1fr}.quick-side>b,.quick-action>b{font-size:19px}.quick-liq b{font-size:16px}}
 
-/* v0.9.1 S&P 500 Finviz map */
-.finviz-map-card{overflow:hidden}
-.finviz-frame-wrap{margin-top:14px;border:1px solid var(--line);border-radius:18px;overflow:hidden;background:#fff;min-height:520px}
-.finviz-frame-wrap iframe{display:block;width:100%;height:620px;border:0;background:#fff}
+
+/* v0.9.2 S&P 500 independent market map */
+.sp500-map-card{overflow:hidden}
+.sp500-map-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:14px}
+.sp500-map-summary>div{background:#0b1320;border:1px solid #1e3046;border-radius:14px;padding:10px 11px;min-width:0}
+.sp500-map-summary span{display:block;color:#8191a7;font-size:9px;font-weight:700}
+.sp500-map-summary b{display:block;margin-top:5px;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sp500-map-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:12px 0 9px;color:#7f90a7;font-size:10px}
+.sp500-map-toolbar select{background:#0b1320;color:#c8d3df;border:1px solid #21334a;border-radius:10px;padding:8px 10px;font-size:10px}
+.sp500-map-grid{display:flex;flex-direction:column;gap:9px;min-height:160px}
+.map-sector{border:1px solid #1d2e43;border-radius:14px;background:#0a111d;padding:8px;overflow:hidden}
+.map-sector-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
+.map-sector-head b{font-size:10px;color:#c4d0df}
+.map-sector-head span{font-size:9px;font-weight:800}
+.map-sector-tiles{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));grid-auto-flow:dense;gap:3px}
+.map-tile{display:flex;flex-direction:column;justify-content:center;align-items:center;min-height:42px;border-radius:5px;padding:4px 2px;color:#f5f8fb;text-shadow:0 1px 2px rgba(0,0,0,.45);overflow:hidden;border:1px solid rgba(255,255,255,.07)}
+.map-tile.rank-xl{grid-column:span 3;min-height:64px}.map-tile.rank-lg{grid-column:span 2;min-height:54px}.map-tile.rank-md{grid-column:span 1;min-height:48px}
+.map-tile b{font-size:10px;line-height:1.1;max-width:100%;overflow:hidden;text-overflow:ellipsis}.map-tile small{font-size:8px;margin-top:3px;font-weight:800}
+.map-tile.up5{background:#087c57}.map-tile.up4{background:#0b6e50}.map-tile.up3{background:#115f48}.map-tile.up2{background:#164c3c}.map-tile.up1{background:#1c3b32}
+.map-tile.flat{background:#293441}.map-tile.down1{background:#493039}.map-tile.down2{background:#63313d}.map-tile.down3{background:#7e3040}.map-tile.down4{background:#9b3041}.map-tile.down5{background:#b92f43}
+.sp500-map-error{padding:24px 12px;text-align:center;color:#8fa0b6;border:1px dashed #2a3b50;border-radius:14px;line-height:1.6;font-size:11px}
+@media(max-width:600px){.sp500-map-summary{grid-template-columns:1fr 1fr 1fr}.sp500-map-summary b{font-size:12px}.map-sector-tiles{grid-template-columns:repeat(5,minmax(0,1fr))}.map-tile.rank-xl{grid-column:span 3}.map-tile.rank-lg{grid-column:span 2}}
+
 .external-map-btn{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:0 14px;border:1px solid var(--line);border-radius:999px;color:var(--text);text-decoration:none;font-weight:700;font-size:13px;background:rgba(255,255,255,.03)}
-@media (max-width:600px){.finviz-frame-wrap{min-height:440px}.finviz-frame-wrap iframe{height:520px}}

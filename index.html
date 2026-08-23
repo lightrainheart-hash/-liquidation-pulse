@@ -10,13 +10,13 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="apple-touch-icon" href="./icon-180.png" />
   <link rel="stylesheet" href="./styles.css" />
-  <title>LiqPulse v0.9.1</title>
+  <title>LiqPulse v0.9.2</title>
 </head>
 <body>
   <main class="app-shell">
     <header class="topbar">
       <div>
-        <div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v0.9.1</span></div>
+        <div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v0.9.2</span></div>
         <h1>LiqPulse</h1>
       </div>
       <div id="connBadge" class="status offline"><span></span><b>接続中</b></div>
@@ -76,18 +76,29 @@
       <div class="hint">「おすすめ」はリアルタイム市場データを統合した売買判断の補助です。低信頼度では無理にLONG/SHORTを選ばず「見送り」を表示します。</div>
     </section>
 
-    <section id="finvizMapCard" class="card finviz-map-card hidden">
+    <section id="finvizMapCard" class="card sp500-map-card hidden">
       <div class="section-head">
         <div>
-          <div class="card-title">Finviz S&P 500 Map</div>
-          <div class="subtitle">S&P 500 構成銘柄のヒートマップ（Finviz公式ページ）</div>
+          <div class="card-title">S&amp;P 500 Market Map</div>
+          <div class="subtitle">Finviz風のLiqPulse独自ヒートマップ / S&amp;P 500構成銘柄</div>
         </div>
-        <a class="external-map-btn" href="https://finviz.com/map" target="_blank" rel="noopener noreferrer">公式を開く ↗</a>
+        <a class="external-map-btn" href="https://finviz.com/map" target="_blank" rel="noopener noreferrer">Finviz公式 ↗</a>
       </div>
-      <div class="finviz-frame-wrap">
-        <iframe id="finvizMapFrame" src="https://finviz.com/map" title="Finviz S&P 500 Map" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+      <div class="sp500-map-summary">
+        <div><span>市場ムード</span><b id="sp500Mood">取得中</b></div>
+        <div><span>上昇 / 下落</span><b id="sp500Breadth">—</b></div>
+        <div><span>時価総額加重</span><b id="sp500Weighted">—</b></div>
       </div>
-      <div class="hint">Finvizのページを直接表示します。Finviz側の埋め込み制限で表示されない場合は「公式を開く」を使ってください。LiqPulse側ではFinvizデータを複製・再配布しません。</div>
+      <div class="sp500-map-toolbar">
+        <span id="sp500MapStatus">市場データ取得中</span>
+        <select id="sp500MapLimit" aria-label="表示銘柄数">
+          <option value="80">上位80</option>
+          <option value="200">上位200</option>
+          <option value="520">全構成</option>
+        </select>
+      </div>
+      <div id="sp500MapGrid" class="sp500-map-grid" aria-live="polite"></div>
+      <div class="hint">Finvizの画面を複製せず、S&amp;P 500構成銘柄の公開市場データからLiqPulseが独自描画します。無料公開データは遅延する場合があります。色は当日騰落率、タイルの大きさは時価総額順位の近似です。</div>
     </section>
 
     <section class="card decision-card">
