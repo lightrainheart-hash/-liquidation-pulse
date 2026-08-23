@@ -83,12 +83,19 @@ function renderAssetTabs(){
   }
 }
 
+function updateAssetSpecificPanels(){
+  const posCard=$('positioningCard');
+  if(posCard) posCard.classList.toggle('hidden',!state.asset.positioning);
+  const finviz=$('finvizMapCard');
+  if(finviz) finviz.classList.toggle('hidden',state.asset.symbol!=='SP500');
+}
+
 async function switchAsset(symbol){
   if(state.switching || symbol===state.asset.symbol) return;
   state.switching=true;
   state.asset=ASSETS.find(x=>x.symbol===symbol)||ASSETS[0];
   state.tradeEvents=[]; state.heatmap=null; state.positioning=null; state.orderbook=null; state.latestPrice=null;
-  renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderQuickView(); renderRelaySettings();
+  renderAssetTabs(); updateAssetSpecificPanels(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderQuickView(); renderRelaySettings();
   connectWs(true);
   await Promise.allSettled([fetchMeta(), fetchHeatmap(), fetchPositioning(), fetchOrderBook()]);
   state.switching=false;
@@ -136,20 +143,34 @@ function marketMomentum(){
 
 async function fetchMeta(){
   try{
-    const req={type:'metaAndAssetCtxs'}; if(state.asset.dex) req.dex=state.asset.dex;
-    const res=await fetch(CONFIG.infoUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(req),cache:'no-store'});
-    if(!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data=await res.json();
-    const meta=data?.[0], ctxs=data?.[1];
-    if(!meta?.universe || !Array.isArray(ctxs)) throw new Error('Unexpected response');
-    meta.universe.forEach((u,i)=>{
-      const c=ctxs[i]; if(!c) return;
-      const markPx=Number(c.markPx), oi=Number(c.openInterest);
-      state.ctxByCoin.set(u.name,{markPx,funding:Number(c.funding),openInterestUsd:oi*markPx});
-    });
-    const c=state.ctxByCoin.get(state.asset.symbol);
-    if(c && !state.latestPrice) state.latestPrice=c.markPx;
-    if(c) saveMarketSnapshot(state.asset.symbol,c,state.latestPrice||c.markPx);
+    let data;
+    // HIP-3 markets are fetched through our Worker so iOS/CORS and dex handling stay consistent.
+    if(state.asset.dex){
+      const relayBase=(CONFIG.relayBase||'').replace(/\/$/,'');
+      if(!relayBase) throw new Error('Relay not configured');
+      const raw=await fetchJsonWithTimeout(`${relayBase}/market/${encodeURIComponent(state.asset.symbol)}`,CONFIG.relayTimeoutMs);
+      if(raw?.error) throw new Error(raw.error);
+      const c={markPx:Number(raw.markPx),funding:Number(raw.funding),openInterestUsd:Number(raw.openInterestUsd)};
+      if(!Number.isFinite(c.markPx)) throw new Error('Invalid HIP-3 market response');
+      state.ctxByCoin.set(state.asset.symbol,c);
+      if(!state.latestPrice) state.latestPrice=c.markPx;
+      saveMarketSnapshot(state.asset.symbol,c,state.latestPrice||c.markPx);
+    }else{
+      const req={type:'metaAndAssetCtxs'};
+      const res=await fetch(CONFIG.infoUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(req),cache:'no-store'});
+      if(!res.ok) throw new Error(`HTTP ${res.status}`);
+      data=await res.json();
+      const meta=data?.[0], ctxs=data?.[1];
+      if(!meta?.universe || !Array.isArray(ctxs)) throw new Error('Unexpected response');
+      meta.universe.forEach((u,i)=>{
+        const c=ctxs[i]; if(!c) return;
+        const markPx=Number(c.markPx), oi=Number(c.openInterest);
+        state.ctxByCoin.set(u.name,{markPx,funding:Number(c.funding),openInterestUsd:oi*markPx});
+      });
+      const c=state.ctxByCoin.get(state.asset.symbol);
+      if(c && !state.latestPrice) state.latestPrice=c.markPx;
+      if(c) saveMarketSnapshot(state.asset.symbol,c,state.latestPrice||c.markPx);
+    }
     setText('statusInfo','正常');
     renderBase(); renderPressure(); renderDecisionEngine();
   }catch(err){
@@ -570,7 +591,7 @@ function normalizeRatioPoint(value){
 }
 
 async function fetchPositioning(){
-  if(!state.asset.positioning){ state.positioning=null; setText('statusPositioning','未対応'); renderPositioning(); return; }
+  if(!state.asset.positioning){ state.positioning=null; setText('statusPositioning','対象外'); renderPositioning(); return; }
   const relayBase=(CONFIG.relayBase||'').replace(/\/$/,'');
   if(!relayBase){ state.positioning=null; setText('statusPositioning','Relay未設定'); renderPositioning(); return; }
   setText('statusPositioning','取得中');
@@ -846,7 +867,7 @@ window.addEventListener('offline',()=>setStatus('error','OFFLINE'));
 document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'){ connectWs(); fetchMeta(); fetchHeatmap(); fetchPositioning(); fetchOrderBook(); } });
 
 (async function init(){
-  renderAssetTabs(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderQuickView(); renderRelaySettings();
+  renderAssetTabs(); updateAssetSpecificPanels(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderQuickView(); renderRelaySettings();
   connectWs(); setupTimers();
   await Promise.allSettled([fetchMeta(),fetchHeatmap(),fetchPositioning(),fetchOrderBook()]);
   if('serviceWorker' in navigator){
@@ -857,4 +878,4 @@ document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==
   }
 })();
 
-// LiqPulse v0.9.0
+// LiqPulse v0.9.1

@@ -1,8 +1,8 @@
-# LiqPulse v0.9.0
+# LiqPulse v0.9.1
 
 BTC / ETH / SOL / XRP / ZEC に加え、trade.xyz の HIP-3 市場 `SP500` / `GOLD` / `SILVER` を追加。
 
-## v0.9.0
+## v0.9.1
 - ZECを含む全銘柄でHyperliquid L2板を取得
 - 実清算データがない場合はL2板から「推定上側/下側反応帯」を表示（実清算ラインとは別物として明記）
 - S&P 500 (`xyz:SP500`)、金 (`xyz:GOLD`)、銀 (`xyz:SILVER`) の価格 / OI / Funding / Takerフロー / AI Quick View / Market Biasを追加

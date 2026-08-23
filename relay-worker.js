@@ -4,6 +4,7 @@
 const ALLOWED_HEATMAP_SYMBOLS = new Set(['BTC', 'ETH', 'SOL', 'XRP', 'ZEC']);
 const ALLOWED_POSITIONING_SYMBOLS = new Set(['BTC', 'ETH', 'SOL', 'XRP', 'ZEC']);
 const BOOK_COINS = { BTC:'BTC', ETH:'ETH', SOL:'SOL', XRP:'XRP', ZEC:'ZEC', SP500:'xyz:SP500', GOLD:'xyz:GOLD', SILVER:'xyz:SILVER' };
+const MARKET_META = { SP500:{dex:'xyz',name:'SP500'}, GOLD:{dex:'xyz',name:'GOLD'}, SILVER:{dex:'xyz',name:'SILVER'} };
 const HYPERLIQUID_INFO='https://api.hyperliquid.xyz/info';
 const HEATMAP_UPSTREAM = 'https://trade.hyperperps.app/api/public/heatmap/';
 const BINANCE_FUTURES_DATA = 'https://fapi.binance.com/futures/data/';
@@ -137,12 +138,12 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === '/health') {
-      return Response.json({ ok: true, service: 'liqpulse-relay', version: '0.9.0' }, { headers });
+      return Response.json({ ok: true, service: 'liqpulse-relay', version: '0.9.1' }, { headers });
     }
 
     if (url.pathname === '/capabilities') {
       return Response.json({
-        version: '0.9.0',
+        version: '0.9.1',
         market: ['BTC','ETH','SOL','XRP','ZEC','SP500','GOLD','SILVER'],
         heatmap: ['BTC','ETH','SOL','XRP','ZEC'],
         positioning: ['BTC','ETH','SOL','XRP','ZEC'],
@@ -173,6 +174,22 @@ export default {
       }
     }
 
+
+    const marketMatch = url.pathname.match(/^\/market\/([A-Za-z0-9_-]+)$/);
+    if (marketMatch) {
+      const symbol=marketMatch[1].toUpperCase(), cfg=MARKET_META[symbol];
+      if(!cfg) return Response.json({error:'unsupported_symbol'}, {status:400,headers});
+      try{
+        const upstream=await fetch(HYPERLIQUID_INFO,{method:'POST',headers:{'content-type':'application/json','accept':'application/json'},body:JSON.stringify({type:'metaAndAssetCtxs',dex:cfg.dex})});
+        if(!upstream.ok) return Response.json({error:'market_upstream_http',status:upstream.status},{status:502,headers});
+        const data=await upstream.json(), meta=data?.[0], ctxs=data?.[1];
+        if(!meta?.universe || !Array.isArray(ctxs)) return Response.json({error:'market_upstream_shape'},{status:502,headers});
+        let i=meta.universe.findIndex(u=>String(u?.name||'').toUpperCase()===cfg.name || String(u?.name||'').toUpperCase()===`XYZ:${cfg.name}`);
+        if(i<0) return Response.json({error:'market_symbol_not_found',available:meta.universe.map(u=>u?.name).filter(Boolean).slice(0,80)},{status:404,headers});
+        const c=ctxs[i]||{}, markPx=Number(c.markPx), oi=Number(c.openInterest), funding=Number(c.funding);
+        return Response.json({symbol,dex:cfg.dex,coin:meta.universe[i]?.name,markPx:Number.isFinite(markPx)?markPx:null,openInterest:Number.isFinite(oi)?oi:null,openInterestUsd:Number.isFinite(markPx)&&Number.isFinite(oi)?markPx*oi:null,funding:Number.isFinite(funding)?funding:null,timestamp:Date.now()},{headers});
+      }catch(error){ return Response.json({error:'market_upstream_failed',message:String(error?.message||error)},{status:502,headers}); }
+    }
     const bookMatch = url.pathname.match(/^\/book\/([A-Za-z0-9_-]+)$/);
     if (bookMatch) {
       const symbol=bookMatch[1].toUpperCase(), coin=BOOK_COINS[symbol];

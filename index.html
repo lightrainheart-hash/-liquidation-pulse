@@ -10,13 +10,13 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="apple-touch-icon" href="./icon-180.png" />
   <link rel="stylesheet" href="./styles.css" />
-  <title>LiqPulse v0.9.0</title>
+  <title>LiqPulse v0.9.1</title>
 </head>
 <body>
   <main class="app-shell">
     <header class="topbar">
       <div>
-        <div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v0.9.0</span></div>
+        <div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v0.9.1</span></div>
         <h1>LiqPulse</h1>
       </div>
       <div id="connBadge" class="status offline"><span></span><b>接続中</b></div>
@@ -74,6 +74,20 @@
       </div>
       <div id="quickAdvice" class="quick-advice">データ取得後に、方向と売買候補を簡潔に表示します。</div>
       <div class="hint">「おすすめ」はリアルタイム市場データを統合した売買判断の補助です。低信頼度では無理にLONG/SHORTを選ばず「見送り」を表示します。</div>
+    </section>
+
+    <section id="finvizMapCard" class="card finviz-map-card hidden">
+      <div class="section-head">
+        <div>
+          <div class="card-title">Finviz S&P 500 Map</div>
+          <div class="subtitle">S&P 500 構成銘柄のヒートマップ（Finviz公式ページ）</div>
+        </div>
+        <a class="external-map-btn" href="https://finviz.com/map" target="_blank" rel="noopener noreferrer">公式を開く ↗</a>
+      </div>
+      <div class="finviz-frame-wrap">
+        <iframe id="finvizMapFrame" src="https://finviz.com/map" title="Finviz S&P 500 Map" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+      </div>
+      <div class="hint">Finvizのページを直接表示します。Finviz側の埋め込み制限で表示されない場合は「公式を開く」を使ってください。LiqPulse側ではFinvizデータを複製・再配布しません。</div>
     </section>
 
     <section class="card decision-card">
@@ -144,7 +158,7 @@
     </section>
 
 
-    <section class="card positioning-card">
+    <section id="positioningCard" class="card positioning-card">
       <div class="section-head">
         <div>
           <div class="card-title">Long / Short Positioning</div>
