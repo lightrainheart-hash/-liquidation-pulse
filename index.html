@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no" />
+  <meta name="theme-color" content="#090d16" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="LiqPulse" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="./icons/icon-180.png" />
+  <link rel="stylesheet" href="./styles.css" />
+  <title>LiqPulse</title>
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">LIVE DERIVATIVES MONITOR</div>
+        <h1>LiqPulse</h1>
+      </div>
+      <div id="connBadge" class="status offline"><span></span><b>接続中</b></div>
+    </header>
+
+    <section class="asset-tabs" id="assetTabs" aria-label="銘柄"></section>
+
+    <section class="hero card">
+      <div>
+        <div class="symbol-line"><span id="assetName">Bitcoin</span><small id="venueLabel">Hyperliquid</small></div>
+        <div id="price" class="price">—</div>
+        <div class="meta-row">
+          <span>Mark <b id="markPx">—</b></span>
+          <span>OI <b id="openInterest">—</b></span>
+          <span>Funding <b id="funding">—</b></span>
+        </div>
+      </div>
+      <button id="refreshBtn" class="icon-btn" aria-label="更新">↻</button>
+    </section>
+
+    <section class="grid two">
+      <article class="card">
+        <div class="card-title">Long / Short フロー</div>
+        <div class="ratio-row"><b class="green" id="longPct">50.0%</b><b class="red" id="shortPct">50.0%</b></div>
+        <div class="ratio"><i id="longBar"></i><i id="shortBar"></i></div>
+        <div class="hint">直近5分の成行約定をUSD換算した買い/売り比率。建玉比率とは別指標です。</div>
+      </article>
+      <article class="card">
+        <div class="card-title">Pressure</div>
+        <div class="score"><span>上方向スクイーズ</span><b id="upScore">—</b></div>
+        <div class="score"><span>下方向カスケード</span><b id="downScore">—</b></div>
+        <div class="hint">清算クラスター・距離・Funding・取引フローから暫定算出。</div>
+      </article>
+    </section>
+
+    <section class="card heatmap-card">
+      <div class="section-head">
+        <div>
+          <div class="card-title">清算クラスター</div>
+          <div class="subtitle" id="heatmapSource">BTC / ETH / SOL: HyperPerps実ポジション集計</div>
+        </div>
+        <span id="heatmapAge" class="pill">—</span>
+      </div>
+      <div id="heatmapNotice" class="notice hidden"></div>
+      <div id="heatmap" class="heatmap"></div>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <div class="card-title">リアルタイム取引フロー</div>
+          <div class="subtitle">WebSocket / 直近5分</div>
+        </div>
+        <span id="tradeCount" class="pill">0 trades</span>
+      </div>
+      <div class="flow-stats">
+        <div><span>BUY</span><b id="buyUsd" class="green">$0</b></div>
+        <div><span>SELL</span><b id="sellUsd" class="red">$0</b></div>
+      </div>
+    </section>
+
+    <section class="card compact">
+      <div class="card-title">データ状態</div>
+      <ul class="data-status">
+        <li><span>価格 / Trades</span><b id="statusWs">接続待ち</b></li>
+        <li><span>OI / Funding</span><b id="statusInfo">取得待ち</b></li>
+        <li><span>清算マップ</span><b id="statusHeatmap">取得待ち</b></li>
+      </ul>
+    </section>
+
+    <footer>
+      分析専用。注文機能なし。清算マップは価格到達を保証するものではありません。
+    </footer>
+  </main>
+  <script src="./app.js" defer></script>
+</body>
+</html>
