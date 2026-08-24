@@ -11,13 +11,13 @@
 <link href="./manifest.webmanifest" rel="manifest"/>
 <link href="./icon-180.png" rel="apple-touch-icon"/>
 <link href="./styles.css" rel="stylesheet"/>
-<title>LiqPulse v2.2.0</title>
+<title>LiqPulse v2.3.0</title>
 </head>
 <body>
 <main class="app-shell">
 <header class="topbar">
 <div>
-<div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v2.2.0</span></div>
+<div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v2.3.0</span></div>
 <h1>LiqPulse</h1>
 </div>
 <div class="status offline" id="connBadge"><span></span><b>接続中</b></div>
@@ -34,6 +34,42 @@
 </div>
 <div class="hero-status-row"><span class="pill" id="heroFreshness">更新待ち</span><span class="pill" id="heroDataQuality">データ品質 —</span></div></div>
 <button aria-label="更新" class="icon-btn" id="refreshBtn">↻</button>
+</section>
+<section class="card quick-view-card" id="cryptoQuickCard">
+<div class="section-head">
+<div>
+<div class="card-title quick-title">AI Quick View</div>
+<div class="subtitle">方向・候補・重要ラインを最優先表示</div>
+</div>
+
+<div class="quick-head-badges"><span class="signal-badge neutral" id="quickAlert">分析中</span><span class="pill" id="quickDataQuality">品質 —</span></div></div>
+<div class="quick-primary">
+<div class="quick-side">
+<span>市場優勢</span>
+<b id="quickDominance">—</b>
+<small id="quickDominanceMeta">LONG — / SHORT —</small>
+</div>
+<div class="quick-action">
+<span>AI判断のおすすめ</span>
+<b id="quickAction">判定待ち</b>
+<small id="quickActionMeta">信頼度 —</small>
+</div>
+</div><div class="quick-signal-grid"><div><span>Taker</span><b id="quickTaker">—</b><small id="quickTakerMeta">取得待ち</small></div><div><span id="quickPositioningLabel">Long / Short</span><b id="quickPositioning">—</b><small id="quickPositioningMeta">取得待ち</small></div><div><span>Funding</span><b id="quickFunding">—</b><small id="quickFundingMeta">取得待ち</small></div><div><span>OI 15分</span><b id="quickOi">—</b><small id="quickOiMeta">取得待ち</small></div></div>
+<div class="quick-liq-heading"><div class="quick-liq-title">直近の清算ライン</div><span class="pill" id="quickLineMode">判定待ち</span></div>
+<div class="quick-liq-grid">
+<div class="quick-liq up">
+<span>↑ ショート清算 / 上側トリガー</span>
+<b id="quickShortLine">—</b>
+<small id="quickShortLineMeta">上昇時のショート清算候補</small>
+</div>
+<div class="quick-liq down">
+<span>↓ ロング清算 / 下側トリガー</span>
+<b id="quickLongLine">—</b>
+<small id="quickLongLineMeta">下落時のロング清算候補</small>
+</div>
+</div>
+<div class="quick-advice" id="quickAdvice">データ取得後に、方向と売買候補を簡潔に表示します。</div>
+<div class="hint">「おすすめ」はリアルタイム市場データを統合した売買判断の補助です。低信頼度では無理にLONG/SHORTを選ばず「見送り」を表示します。</div>
 </section>
 <section class="card mexc-overview-card hidden" id="mexcStockCard">
 <div class="section-head">
@@ -87,42 +123,6 @@
 <div class="quick-advice" id="sp500CommandAdvice">S&amp;P 500構成銘柄データを取得後に総合判断します。</div>
 <div class="hint">大型株だけで指数が動いている場合と、市場全体が同方向に参加している場合を区別します。これは売買判断の補助指標で、将来の値動きを保証するものではありません。</div>
 </section>
-<section class="card quick-view-card" id="cryptoQuickCard">
-<div class="section-head">
-<div>
-<div class="card-title quick-title">AI Quick View</div>
-<div class="subtitle">方向・候補・重要ラインを最優先表示</div>
-</div>
-
-<div class="quick-head-badges"><span class="signal-badge neutral" id="quickAlert">分析中</span><span class="pill" id="quickDataQuality">品質 —</span></div></div>
-<div class="quick-primary">
-<div class="quick-side">
-<span>市場優勢</span>
-<b id="quickDominance">—</b>
-<small id="quickDominanceMeta">LONG — / SHORT —</small>
-</div>
-<div class="quick-action">
-<span>AI判断のおすすめ</span>
-<b id="quickAction">判定待ち</b>
-<small id="quickActionMeta">信頼度 —</small>
-</div>
-</div><div class="quick-signal-grid"><div><span>Taker</span><b id="quickTaker">—</b><small id="quickTakerMeta">取得待ち</small></div><div><span id="quickPositioningLabel">Long / Short</span><b id="quickPositioning">—</b><small id="quickPositioningMeta">取得待ち</small></div><div><span>Funding</span><b id="quickFunding">—</b><small id="quickFundingMeta">取得待ち</small></div><div><span>OI 15分</span><b id="quickOi">—</b><small id="quickOiMeta">取得待ち</small></div></div>
-<div class="quick-liq-heading"><div class="quick-liq-title">直近の清算ライン</div><span class="pill" id="quickLineMode">判定待ち</span></div>
-<div class="quick-liq-grid">
-<div class="quick-liq up">
-<span>↑ ショート清算 / 上側トリガー</span>
-<b id="quickShortLine">—</b>
-<small id="quickShortLineMeta">上昇時のショート清算候補</small>
-</div>
-<div class="quick-liq down">
-<span>↓ ロング清算 / 下側トリガー</span>
-<b id="quickLongLine">—</b>
-<small id="quickLongLineMeta">下落時のロング清算候補</small>
-</div>
-</div>
-<div class="quick-advice" id="quickAdvice">データ取得後に、方向と売買候補を簡潔に表示します。</div>
-<div class="hint">「おすすめ」はリアルタイム市場データを統合した売買判断の補助です。低信頼度では無理にLONG/SHORTを選ばず「見送り」を表示します。</div>
-</section>
 <section class="card btc-whale-card hidden" id="btcWhaleCard">
 <div class="section-head">
 <div>
@@ -136,12 +136,12 @@
 <span>履歴</span><button data-whale-hours="1" onclick="setWhaleLookback(1)" type="button">1H</button><button class="active" data-whale-hours="3" onclick="setWhaleLookback(3)" type="button">3H</button><button data-whale-hours="6" onclick="setWhaleLookback(6)" type="button">6H</button>
 </div>
 <div class="whale-control-group">
-<span>価格幅</span><button data-whale-range="1000" onclick="setWhaleDisplayRange(1000)" type="button">±1k</button><button class="active" data-whale-range="3000" onclick="setWhaleDisplayRange(3000)" type="button">±3k</button><button data-whale-range="5000" onclick="setWhaleDisplayRange(5000)" type="button">±5k</button>
+<span>価格幅</span><button data-whale-range-slot="0" type="button">AI近</button><button class="active" data-whale-range-slot="1" type="button">AI標準</button><button data-whale-range-slot="2" type="button">AI広域</button>
 </div>
 <div class="whale-control-group">
 <span>拡大</span><button class="active" data-whale-zoom="1" onclick="setWhaleChartZoom(1)" type="button">標準</button><button data-whale-zoom="1.35" onclick="setWhaleChartZoom(1.35)" type="button">拡大</button><button data-whale-zoom="1.7" onclick="setWhaleChartZoom(1.7)" type="button">最大</button>
 </div>
-<small id="whaleRangeStatus">表示 ±$3,000 / 収集 ±$10,000</small>
+<small id="whaleRangeStatus">AIレンジ判定中</small>
 </div>
 <div class="whale-summary-grid">
 <div><span>直上の大口売り壁</span><b id="whaleNearestSell">—</b><small id="whaleNearestSellMeta">—</small></div>
@@ -345,6 +345,6 @@
 </section>
 <footer>分析専用・注文機能なし。表示される方向・候補は複数の公開市場データを統合した補助シグナルです。実清算データとL2推定反応帯は明確に区別し、取得できない項目は推測値で埋めません。</footer>
 </main>
-<script defer="" src="./app.js?v=2.2.0"></script>
+<script defer="" src="./app.js?v=2.3.0"></script>
 </body>
 </html>

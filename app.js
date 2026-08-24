@@ -29,19 +29,31 @@ const ASSETS = [
   { symbol:'BTC', name:'Bitcoin', type:'crypto', heatmap:true, positioning:true, dex:'', apiCoin:'BTC', estimatedZones:true,
     orderMap:{title:'BTC Whale Order Map',subtitle:'大口売り壁・買い壁の継続時間を価格×時間で可視化 / Hyperliquid L2',capture:10000,ranges:[1000,3000,5000],defaultRange:3000,bucket:100,minNotional:100000} },
   { symbol:'ETH', name:'Ethereum', type:'crypto', heatmap:true, positioning:true, dex:'', apiCoin:'ETH', estimatedZones:true,
-    orderMap:{title:'ETH Whale Order Map',subtitle:'Ethereumの大口売り壁・買い壁を価格×時間で可視化 / Hyperliquid L2',capture:1200,ranges:[100,300,500],defaultRange:300,bucket:10,minNotional:75000} },
+    orderMap:{title:'ETH Whale Order Map',subtitle:'Ethereumの大口売り壁・買い壁を価格×時間で可視化 / Hyperliquid L2',capture:1200,ranges:[100,250,500],defaultRange:250,bucket:10,minNotional:75000} },
   { symbol:'SOL', name:'Solana', type:'crypto', heatmap:true, positioning:true, dex:'', apiCoin:'SOL', estimatedZones:true,
-    orderMap:{title:'SOL Whale Order Map',subtitle:'Solanaの大口売り壁・買い壁を価格×時間で可視化 / Hyperliquid L2',capture:150,ranges:[10,30,60],defaultRange:30,bucket:1,minNotional:50000} },
+    orderMap:{title:'SOL Whale Order Map',subtitle:'Solanaの大口売り壁・買い壁を価格×時間で可視化 / Hyperliquid L2',capture:150,ranges:[5,15,30],defaultRange:15,bucket:1,minNotional:50000} },
   { symbol:'XRP', name:'XRP', type:'crypto', heatmap:true, positioning:true, dex:'', apiCoin:'XRP', estimatedZones:true },
   { symbol:'ZEC', name:'Zcash', type:'crypto', heatmap:true, positioning:true, dex:'', apiCoin:'ZEC', estimatedZones:true },
   { symbol:'SP500', name:'S&P 500', type:'index', heatmap:false, positioning:false, dex:'xyz', apiCoin:'xyz:SP500', estimatedZones:true,
-    orderMap:{title:'S&P 500 Liquidity Order Map',subtitle:'Hyperliquid xyz:SP500永久先物の大口流動性を可視化（現物指数全体の板ではありません）',capture:1000,ranges:[100,300,500],defaultRange:300,bucket:10,minNotional:100000} },
+    orderMap:{title:'S&P 500 Liquidity Order Map',subtitle:'Hyperliquid xyz:SP500永久先物の大口流動性を可視化（現物指数全体の板ではありません）',capture:1000,ranges:[100,250,500],defaultRange:250,bucket:10,minNotional:100000} },
   { symbol:'KIOXIA', name:'Kioxia', type:'stockFuture', source:'mexc', provider:'MEXC Stock Futures', heatmap:false, positioning:false, estimatedZones:true,
     apiSymbol:'KIOXIASTOCK_USDT', contractSize:0.001,
     orderMap:{title:'KIOXIA Whale Order Map',subtitle:'MEXC KIOXIAUSDT大口売り壁・買い壁を価格×時間で可視化 / MEXC Futures L2',capture:80,ranges:[5,15,30],defaultRange:15,bucket:0.5,minNotional:5000,strongWall:25000,tierNotionals:[250000,100000,50000,25000,10000]} },
   { symbol:'GOLD', name:'Gold', type:'commodity', heatmap:false, positioning:false, dex:'xyz', apiCoin:'xyz:GOLD', estimatedZones:true },
   { symbol:'SILVER', name:'Silver', type:'commodity', heatmap:false, positioning:false, dex:'xyz', apiCoin:'xyz:SILVER', estimatedZones:true },
 ];
+
+// Adaptive Order Map range model. Each market starts from a market-appropriate
+// percentage profile, then expands when the most recent hour is unusually volatile.
+// Values are intentionally snapped to human-readable price units so the controls
+// stay useful on an iPhone instead of changing by tiny amounts every refresh.
+const WHALE_RANGE_POLICIES = {
+  BTC:{basePct:[0.0125,0.035,0.064],volMult:[0.70,1.50,2.60]},
+  ETH:{basePct:[0.0180,0.055,0.110],volMult:[0.75,1.60,2.80]},
+  SOL:{basePct:[0.0250,0.075,0.150],volMult:[0.75,1.60,2.80]},
+  SP500:{basePct:[0.0125,0.032,0.064],volMult:[0.70,1.50,2.60]},
+  KIOXIA:{basePct:[0.0160,0.045,0.095],volMult:[0.80,1.70,3.00]},
+};
 const LAST_ASSET_KEY='liqpulse_last_asset';
 // Cold starts always open on BTC. We still remember the last asset for diagnostics/history,
 // but do not let a previous session unexpectedly change the startup screen.
@@ -73,6 +85,7 @@ const state = {
   whaleLastBookAt:0,
   whaleLookbackMs:3 * 60 * 60 * 1000,
   whaleDisplayRangeUsd:null,
+  whaleRangeSlot:null,
   whaleChartZoom:null,
   assetEpoch:0,
   advancedOpen:false,
@@ -143,7 +156,7 @@ async function switchAsset(symbol){
   state.tradeEvents=[]; state.tradeSeenKeys=new Map(); state.lastExternalTradeAt=0; state.externalCandles=[]; state.heatmap=null; state.positioning=null; state.orderbook=null; state.sp500Map=null; state.latestPrice=null; state.decision=null;
   state.freshness={ws:0,meta:0,heatmap:0,positioning:0,orderbook:0,sp500:0}; state.sourceErrors={};
   if(next.orderMap){ state.whaleHistory=loadWhaleHistory(); state.whaleTracks=loadWhaleTracks(); } else { state.whaleHistory=[]; state.whaleTracks=[]; }
-  state.whaleLastBookAt=0; state.whaleDisplayRangeUsd=null; state.whaleChartZoom=null;
+  state.whaleLastBookAt=0; state.whaleDisplayRangeUsd=null; state.whaleRangeSlot=null; state.whaleChartZoom=null;
   renderAssetTabs(); updateAssetSpecificPanels(); renderBase(); renderMexcOverview(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderQuickView(); renderSp500Command(); renderWhaleOrderMap(); renderRelaySettings(); renderVisibilityControls();
   connectWs(true);
   state.switching=false;
@@ -428,8 +441,6 @@ function estimatedTriggerZones(){
 
 
 function whaleConfig(){ return state.asset?.orderMap||null; }
-function whaleCaptureRangeUsd(){ return Number(whaleConfig()?.capture)||0; }
-function whaleDisplayRangeOptions(){ return whaleConfig()?.ranges||[]; }
 function whaleSnapshotKey(symbol=state.asset.symbol){ return `liqpulse_order_map_walls_v3_${symbol}`; }
 function whaleTrackKey(symbol=state.asset.symbol){ return `liqpulse_order_map_tracks_v3_${symbol}`; }
 const WHALE_RETENTION_MS=6*60*60*1000;
@@ -440,11 +451,76 @@ function rangeCompact(v){
   if(v>=1000) return `${(v/1000).toFixed(1)}k`;
   return Number.isInteger(v)?String(v):v.toFixed(1);
 }
-function loadWhaleDisplayRange(){
-  const cfg=whaleConfig(); if(!cfg) return 0;
-  const key=`liqpulse_order_map_display_range_${state.asset.symbol}`;
-  const v=Number(localStorage.getItem(key));
-  return cfg.ranges.includes(v)?v:cfg.defaultRange;
+function niceRangeCeil(raw){
+  if(!Number.isFinite(raw)||raw<=0) return 0;
+  const pow=10**Math.floor(Math.log10(raw)), n=raw/pow;
+  const steps=[1,1.5,2,2.5,3,4,5,7.5,10];
+  const step=steps.find(x=>n<=x+1e-9) ?? 10;
+  return Number((step*pow).toPrecision(12));
+}
+function whaleRecentRangePct(){
+  const spot=state.latestPrice||state.ctxByCoin.get(state.asset.symbol)?.markPx;
+  if(!Number.isFinite(spot)||spot<=0) return NaN;
+  const end=Date.now(), start=end-60*60*1000;
+  const candles=whaleCandles(start,end);
+  const prices=[];
+  for(const c of candles){
+    for(const v of [c.l,c.h,c.c]) if(Number.isFinite(v)&&v>0) prices.push(v);
+  }
+  if(prices.length<4){
+    for(const p of whalePricePoints(start,end)) if(Number.isFinite(p.price)&&p.price>0) prices.push(p.price);
+  }
+  if(prices.length<3) return NaN;
+  prices.sort((a,b)=>a-b);
+  const q=(pct)=>prices[Math.min(prices.length-1,Math.max(0,Math.floor((prices.length-1)*pct)))];
+  const lo=prices.length>=12?q(0.05):prices[0], hi=prices.length>=12?q(0.95):prices[prices.length-1];
+  return clamp((hi-lo)/spot,0,0.35);
+}
+function whaleRangeDecision(){
+  const cfg=whaleConfig();
+  if(!cfg) return {ranges:[],capture:0,volPct:NaN,mode:'対象外'};
+  const fallbackRanges=Array.isArray(cfg.ranges)&&cfg.ranges.length===3?cfg.ranges:[1,3,5];
+  const fallbackCapture=Number(cfg.capture)||fallbackRanges[2]*2;
+  const spot=state.latestPrice||state.ctxByCoin.get(state.asset.symbol)?.markPx;
+  if(!Number.isFinite(spot)||spot<=0) return {ranges:[...fallbackRanges],capture:fallbackCapture,volPct:NaN,mode:'初期プロファイル'};
+  const policy=WHALE_RANGE_POLICIES[state.asset.symbol]||{basePct:[0.02,0.06,0.12],volMult:[0.75,1.6,2.8]};
+  const volPct=whaleRecentRangePct();
+  const ranges=policy.basePct.map((basePct,i)=>{
+    const base=spot*basePct;
+    const volDriven=Number.isFinite(volPct)?spot*volPct*policy.volMult[i]:0;
+    return niceRangeCeil(Math.max(base,volDriven));
+  });
+  for(let i=1;i<ranges.length;i++){
+    if(!(ranges[i]>ranges[i-1])) ranges[i]=niceRangeCeil(ranges[i-1]*1.5+Number.EPSILON);
+  }
+  const captureRaw=Math.max(fallbackCapture,ranges[2]*2);
+  const capture=captureRaw<=fallbackCapture*1.05?fallbackCapture:niceRangeCeil(captureRaw);
+  return {ranges,capture,volPct,mode:Number.isFinite(volPct)?'価格＋1H変動':'価格プロファイル'};
+}
+function whaleCaptureRangeUsd(){ return whaleRangeDecision().capture; }
+function whaleDisplayRangeOptions(){ return whaleRangeDecision().ranges; }
+function loadWhaleRangeSlot(){
+  const slotKey=`liqpulse_order_map_range_slot_${state.asset.symbol}`;
+  const savedRaw=localStorage.getItem(slotKey);
+  if(savedRaw!==null){
+    const saved=Number(savedRaw);
+    if(Number.isInteger(saved)&&saved>=0&&saved<=2) return saved;
+  }
+  // Migrate the old saved absolute range to the closest of the new AI-generated slots.
+  const oldRaw=localStorage.getItem(`liqpulse_order_map_display_range_${state.asset.symbol}`);
+  const opts=whaleDisplayRangeOptions();
+  if(oldRaw!==null&&opts.length){
+    const old=Number(oldRaw);
+    if(Number.isFinite(old)){
+      let best=1,bestDist=Infinity;
+      opts.forEach((v,i)=>{const d=Math.abs(v-old);if(d<bestDist){best=i;bestDist=d;}});
+      return best;
+    }
+  }
+  return 1;
+}
+function whaleRangeSlot(){
+  return Number.isInteger(state.whaleRangeSlot)&&state.whaleRangeSlot>=0&&state.whaleRangeSlot<=2?state.whaleRangeSlot:loadWhaleRangeSlot();
 }
 function loadWhaleChartZoom(){
   const key=`liqpulse_order_map_chart_zoom_${state.asset.symbol}`;
@@ -452,8 +528,8 @@ function loadWhaleChartZoom(){
   return WHALE_CHART_ZOOM_OPTIONS.includes(v)?v:1;
 }
 function whaleDisplayRangeUsd(){
-  const opts=whaleDisplayRangeOptions();
-  return opts.includes(state.whaleDisplayRangeUsd)?state.whaleDisplayRangeUsd:loadWhaleDisplayRange();
+  const opts=whaleDisplayRangeOptions(),slot=whaleRangeSlot();
+  return opts[slot]??opts[1]??opts[0]??0;
 }
 function whaleChartZoom(){ return WHALE_CHART_ZOOM_OPTIONS.includes(state.whaleChartZoom)?state.whaleChartZoom:loadWhaleChartZoom(); }
 function loadWhaleHistory(){
@@ -508,7 +584,7 @@ function mergeWhaleBands(walls,spot){
     const prev=map.get(key)||{side:w.side,price,notional:0,count:0,maxNotional:0};
     prev.notional+=w.notional; prev.count+=1; prev.maxNotional=Math.max(prev.maxNotional,w.notional); map.set(key,prev);
   }
-  return [...map.values()].filter(x=>Math.abs(x.price-spot)<=cfg.capture).sort((a,b)=>b.notional-a.notional);
+  return [...map.values()].filter(x=>Math.abs(x.price-spot)<=whaleCaptureRangeUsd()).sort((a,b)=>b.notional-a.notional);
 }
 function whaleTrackTolerance(spot){
   const bucket=Number(whaleConfig()?.bucket)||1;
@@ -613,19 +689,28 @@ function renderWhaleCanvas(metrics){
 }
 function renderWhaleControls(){
   const cfg=whaleConfig(); if(!cfg) return;
-  const ranges=cfg.ranges, buttons=[...document.querySelectorAll('[data-whale-range]')];
-  buttons.forEach((b,i)=>{const v=ranges[i]??cfg.defaultRange;b.dataset.whaleRange=String(v);b.textContent=`±${rangeCompact(v)}`;b.classList.toggle('active',v===whaleDisplayRangeUsd());});
+  const decision=whaleRangeDecision(), ranges=decision.ranges, slot=whaleRangeSlot();
+  const names=['近距離','標準','広域'];
+  document.querySelectorAll('[data-whale-range-slot]').forEach((b,i)=>{
+    const v=ranges[i]??ranges[1]??ranges[0]??0;
+    b.textContent=`±${rangeCompact(v)}`;
+    b.dataset.whaleRange=String(v);
+    b.classList.toggle('active',i===slot);
+    b.setAttribute('aria-label',`${names[i]||'価格幅'} ${priceFmt(v)}`);
+    b.title=`AI ${names[i]||'価格幅'}: ±${priceFmt(v).replace('$','')}`;
+  });
   document.querySelectorAll('[data-whale-hours]').forEach(b=>b.classList.toggle('active',Number(b.dataset.whaleHours)===Math.round((state.whaleLookbackMs||10800000)/3600000)));
   document.querySelectorAll('[data-whale-zoom]').forEach(b=>b.classList.toggle('active',Number(b.dataset.whaleZoom)===whaleChartZoom()));
 }
 function renderWhaleOrderMap(){
   const card=$('btcWhaleCard'); if(!card) return; if(!state.asset.orderMap){card.classList.add('hidden');return;} card.classList.remove('hidden');
-  const cfg=whaleConfig(), displayRange=whaleDisplayRangeUsd(), zoom=whaleChartZoom();
+  const cfg=whaleConfig(), rangeDecision=whaleRangeDecision(), displayRange=whaleDisplayRangeUsd(), zoom=whaleChartZoom();
   setText('whaleTitle',cfg.title); setText('whaleSubtitle',cfg.subtitle); setText('whaleLegendPrice',`${state.asset.symbol}価格`);
   setText('whaleHint',state.asset.source==='mexc'?'赤=大口売り指値、緑=大口買い指値。MEXC Futures公開L2板をLiqPulseが継続観測して可視化します。消失壁は板が見えなくなった推定で、約定・キャンセルの断定ではありません。実清算ラインではありません。':'赤=大口売り指値、緑=大口買い指値。横方向の長さ=壁が観測され続けた時間、線の太さ=最大注文額です。「消失壁」は前回まで存在した板が消えたことを示す推定で、約定・キャンセルの断定ではありません。CoinGlass等の取引所横断データではなくHyperliquid L2由来です。');
   const canvas=$('whaleCanvas'); if(canvas) canvas.setAttribute('aria-label',`${state.asset.symbol} 大口注文マップ`);
-  setText('whaleRangeStatus',`表示 ±$${rangeCompact(displayRange)} / 収集 ±$${rangeCompact(cfg.capture)} / ${zoom===1?'標準':zoom===1.35?'拡大':'最大'}`);
-  setText('whaleSellTotalMeta',`収集範囲 ±$${rangeCompact(cfg.capture)}`); setText('whaleBuyTotalMeta',`収集範囲 ±$${rangeCompact(cfg.capture)}`);
+  const volText=Number.isFinite(rangeDecision.volPct)?` / 1H変動 ${(rangeDecision.volPct*100).toFixed(2)}%`:'';
+  setText('whaleRangeStatus',`AI ${rangeDecision.mode}: 表示 ±$${rangeCompact(displayRange)} / 収集 ±$${rangeCompact(rangeDecision.capture)}${volText} / ${zoom===1?'標準':zoom===1.35?'拡大':'最大'}`);
+  setText('whaleSellTotalMeta',`AI収集範囲 ±$${rangeCompact(rangeDecision.capture)}`); setText('whaleBuyTotalMeta',`AI収集範囲 ±$${rangeCompact(rangeDecision.capture)}`);
   renderWhaleControls();
   const m=whaleMetrics(); if(!m){setText('whalePressureBadge','取得中');setText('whaleBookAge','—');setText('whaleOrderList','');return;}
   const fmt=x=>x?priceFmt(x.price):'—'; setText('whaleNearestSell',fmt(m.nearestSell)); setText('whaleNearestBuy',fmt(m.nearestBuy));
@@ -638,9 +723,17 @@ function renderWhaleOrderMap(){
   renderWhaleCanvas(m);
 }
 function setWhaleLookback(hours){ const h=[1,3,6].includes(Number(hours))?Number(hours):3; state.whaleLookbackMs=h*60*60*1000; renderWhaleOrderMap(); }
+function setWhaleRangeSlot(slot){
+  if(!whaleConfig()) return;
+  const n=Number(slot); if(!Number.isInteger(n)||n<0||n>2) return;
+  state.whaleRangeSlot=n; state.whaleDisplayRangeUsd=null;
+  try{localStorage.setItem(`liqpulse_order_map_range_slot_${state.asset.symbol}`,String(n));}catch{}
+  renderWhaleOrderMap();
+}
 function setWhaleDisplayRange(range){
-  const cfg=whaleConfig(); if(!cfg) return; const r=cfg.ranges.includes(Number(range))?Number(range):cfg.defaultRange; state.whaleDisplayRangeUsd=r;
-  try{localStorage.setItem(`liqpulse_order_map_display_range_${state.asset.symbol}`,String(r));}catch{} renderWhaleOrderMap();
+  // Backward-compatible helper for old cached HTML. Convert an absolute value to the nearest current AI slot.
+  const n=Number(range),opts=whaleDisplayRangeOptions(); if(!opts.length) return;
+  let slot=1,best=Infinity; opts.forEach((v,i)=>{const d=Math.abs(v-n);if(d<best){best=d;slot=i;}}); setWhaleRangeSlot(slot);
 }
 function setWhaleChartZoom(value){
   const z=WHALE_CHART_ZOOM_OPTIONS.includes(Number(value))?Number(value):1; state.whaleChartZoom=z;
@@ -1483,6 +1576,7 @@ $('clearRelayBtn')?.addEventListener('click',clearRelay);
 $('flowWindow').addEventListener('change',(e)=>{ state.flowWindowMs=Number(e.target.value)||300000; renderFlow(); renderPressure(); });
 $('clusterDepth')?.addEventListener('change',(e)=>{ state.clusterDepth=Number(e.target.value)||8; renderHeatmap(); });
 $('sp500MapLimit')?.addEventListener('change',(e)=>{ state.sp500MapLimit=Number(e.target.value)||80; renderSp500Map(); });
+document.querySelectorAll('[data-whale-range-slot]').forEach(btn=>btn.addEventListener('click',()=>setWhaleRangeSlot(Number(btn.dataset.whaleRangeSlot))));
 $('advancedToggle')?.addEventListener('click',toggleAdvanced);
 $('diagnosticsToggle')?.addEventListener('click',toggleDiagnostics);
 window.addEventListener('online',()=>{connectWs(true); fetchMeta(); fetchHeatmap(); fetchPositioning(); fetchOrderBook(); fetchSp500Map(); fetchExternalTrades(); fetchExternalCandles();});
@@ -1504,4 +1598,4 @@ document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==
   }
 })();
 
-// LiqPulse v2.2.0
+// LiqPulse v2.3.0
