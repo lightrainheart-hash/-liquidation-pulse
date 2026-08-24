@@ -120,7 +120,7 @@
 .whale-toolbar{display:flex;align-items:center;gap:6px;margin-top:10px;padding:6px 8px;border:1px solid #1d2d42;border-radius:11px;background:#09111d;color:#7e8fa7;font-size:8px}.whale-toolbar>span{font-weight:800;margin-right:2px}.whale-toolbar button{appearance:none;border:1px solid #26394f;background:#0b1624;color:#8fa0b6;border-radius:8px;padding:5px 9px;font-size:8px;font-weight:800}.whale-toolbar button.active{background:#183356;color:#eef5ff;border-color:#416b9c}.whale-toolbar small{margin-left:auto;color:#708299;font-size:8px}.whale-canvas{height:390px}.whale-order-row{grid-template-columns:72px 1fr 70px 78px}.whale-order-row small{white-space:nowrap}
 @media(max-width:600px){.whale-canvas{height:370px}.whale-order-row{grid-template-columns:65px 1fr 58px 78px;gap:6px}.whale-toolbar small{font-size:7px}}
 
-/* v2.1.0 BTC Whale Map controls */
+/* Whale Map controls */
 .whale-toolbar-main{display:grid;grid-template-columns:auto auto auto 1fr;gap:8px;align-items:center}
 .whale-control-group{display:flex;align-items:center;gap:5px;min-width:0}
 .whale-control-group>span{font-weight:800;color:#7e8fa7;white-space:nowrap}
@@ -132,7 +132,7 @@
   .whale-toolbar-main small{justify-self:start;text-align:left;padding-left:2px}
 }
 
-/* v2.1.0 comprehensive UX + reliability pass */
+/* Comprehensive UX + reliability pass */
 .neutral-text{color:var(--text)!important}.hidden,.panel-collapsed{display:none!important}
 .hero-status-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}.quality-good{border-color:#225d4b!important;color:#72e8c1!important;background:#0e211c!important}.quality-mid{border-color:#6c5929!important;color:#e9c66a!important;background:#201a0e!important}.quality-low{border-color:#6b3040!important;color:#ff91a3!important;background:#271018!important}
 .quick-view-card{border-color:#38587f;box-shadow:0 18px 42px rgba(0,0,0,.25)}.quick-title{font-size:15px;color:#f2f7ff}.quick-head-badges{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
@@ -153,7 +153,18 @@ footer{opacity:.82}
   .advanced-toggle-card,.diagnostics-toggle-card{padding:12px}.advanced-toggle-card .subtitle,.diagnostics-toggle-card .subtitle{max-width:220px}
 }
 
-/* v2.1.0 navigation polish: avoid covering card headings on iPhone while preserving fast horizontal switching. */
+/* Navigation polish: avoid covering card headings on iPhone while preserving fast horizontal switching. */
 .asset-tabs{position:relative!important;top:auto!important;z-index:1!important;background:transparent!important;padding-top:2px!important;padding-bottom:12px!important;margin:0 0 2px!important;box-shadow:none!important;scroll-snap-type:x proximity;overscroll-behavior-x:contain}
 .asset-btn{scroll-snap-align:start}
 .btc-whale-card{scroll-margin-top:16px}
+
+/* v2.2.0 — MEXC stock-futures overview */
+.mexc-overview-card{border-color:#27476b;background:linear-gradient(180deg,rgba(19,35,55,.98),rgba(12,23,38,.98))}
+.mexc-overview-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:14px}
+.mexc-overview-grid>div{min-width:0;border:1px solid #263e5b;background:#091522;border-radius:18px;padding:14px}
+.mexc-overview-grid span{display:block;color:#8fa2bb;font-size:12px;font-weight:700;margin-bottom:8px}
+.mexc-overview-grid b{display:block;color:#edf5ff;font-size:20px;line-height:1.15;overflow-wrap:anywhere}
+.mexc-overview-grid small{display:block;color:#687d98;font-size:11px;margin-top:7px}
+.mexc-risk-strip{margin-top:12px;border:1px solid #2b405a;background:#0a1623;border-radius:14px;padding:12px 14px;font-weight:750;color:#9cafc6}
+.mexc-risk-strip.up{border-color:#167458;color:#39d7a4;background:#0b2a21}.mexc-risk-strip.down{border-color:#8a3548;color:#ff6b87;background:#2a1118}
+@media(max-width:650px){.mexc-overview-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.mexc-overview-grid b{font-size:18px}}

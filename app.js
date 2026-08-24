@@ -13,6 +13,8 @@ const CONFIG = {
   positioningPollMs: 60000,
   orderBookPollMs: 10000,
   sp500MapPollMs: 120000,
+  mexcTradesPollMs: 4000,
+  mexcKlinePollMs: 60000,
   relayTimeoutMs: 10000,
   maxTradeWindowMs: 60 * 60 * 1000,
   wsStaleMs: 15000,
@@ -34,6 +36,9 @@ const ASSETS = [
   { symbol:'ZEC', name:'Zcash', type:'crypto', heatmap:true, positioning:true, dex:'', apiCoin:'ZEC', estimatedZones:true },
   { symbol:'SP500', name:'S&P 500', type:'index', heatmap:false, positioning:false, dex:'xyz', apiCoin:'xyz:SP500', estimatedZones:true,
     orderMap:{title:'S&P 500 Liquidity Order Map',subtitle:'Hyperliquid xyz:SP500永久先物の大口流動性を可視化（現物指数全体の板ではありません）',capture:1000,ranges:[100,300,500],defaultRange:300,bucket:10,minNotional:100000} },
+  { symbol:'KIOXIA', name:'Kioxia', type:'stockFuture', source:'mexc', provider:'MEXC Stock Futures', heatmap:false, positioning:false, estimatedZones:true,
+    apiSymbol:'KIOXIASTOCK_USDT', contractSize:0.001,
+    orderMap:{title:'KIOXIA Whale Order Map',subtitle:'MEXC KIOXIAUSDT大口売り壁・買い壁を価格×時間で可視化 / MEXC Futures L2',capture:80,ranges:[5,15,30],defaultRange:15,bucket:0.5,minNotional:5000,strongWall:25000,tierNotionals:[250000,100000,50000,25000,10000]} },
   { symbol:'GOLD', name:'Gold', type:'commodity', heatmap:false, positioning:false, dex:'xyz', apiCoin:'xyz:GOLD', estimatedZones:true },
   { symbol:'SILVER', name:'Silver', type:'commodity', heatmap:false, positioning:false, dex:'xyz', apiCoin:'xyz:SILVER', estimatedZones:true },
 ];
@@ -47,6 +52,9 @@ const state = {
   ws:null,
   wsBackoff:1000,
   tradeEvents:[],
+  tradeSeenKeys:new Map(),
+  lastExternalTradeAt:0,
+  externalCandles:[],
   flowWindowMs:300000,
   clusterDepth:8,
   ctxByCoin:new Map(),
@@ -121,6 +129,8 @@ function updateAssetSpecificPanels(){
   if(command) command.classList.toggle('hidden',state.asset.symbol!=='SP500');
   const whale=$('btcWhaleCard');
   if(whale) whale.classList.toggle('hidden',!state.asset.orderMap);
+  const mexc=$('mexcStockCard');
+  if(mexc) mexc.classList.toggle('hidden',state.asset.source!=='mexc');
 }
 
 async function switchAsset(symbol){
@@ -130,18 +140,21 @@ async function switchAsset(symbol){
   state.assetEpoch+=1;
   state.asset=next;
   try{localStorage.setItem(LAST_ASSET_KEY,next.symbol);}catch{}
-  state.tradeEvents=[]; state.heatmap=null; state.positioning=null; state.orderbook=null; state.sp500Map=null; state.latestPrice=null; state.decision=null;
+  state.tradeEvents=[]; state.tradeSeenKeys=new Map(); state.lastExternalTradeAt=0; state.externalCandles=[]; state.heatmap=null; state.positioning=null; state.orderbook=null; state.sp500Map=null; state.latestPrice=null; state.decision=null;
   state.freshness={ws:0,meta:0,heatmap:0,positioning:0,orderbook:0,sp500:0}; state.sourceErrors={};
   if(next.orderMap){ state.whaleHistory=loadWhaleHistory(); state.whaleTracks=loadWhaleTracks(); } else { state.whaleHistory=[]; state.whaleTracks=[]; }
   state.whaleLastBookAt=0; state.whaleDisplayRangeUsd=null; state.whaleChartZoom=null;
-  renderAssetTabs(); updateAssetSpecificPanels(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderQuickView(); renderSp500Command(); renderWhaleOrderMap(); renderRelaySettings(); renderVisibilityControls();
+  renderAssetTabs(); updateAssetSpecificPanels(); renderBase(); renderMexcOverview(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderQuickView(); renderSp500Command(); renderWhaleOrderMap(); renderRelaySettings(); renderVisibilityControls();
   connectWs(true);
   state.switching=false;
-  void Promise.allSettled([fetchMeta(), fetchHeatmap(), fetchPositioning(), fetchOrderBook(), fetchSp500Map()]);
+  void Promise.allSettled([fetchMeta(), fetchHeatmap(), fetchPositioning(), fetchOrderBook(), fetchSp500Map(), fetchExternalTrades(), fetchExternalCandles()]);
 }
 
 function renderBase(){
   setText('assetName',state.asset.name);
+  setText('marketSource',state.asset.provider || (state.asset.dex?'Hyperliquid HIP-3':'Hyperliquid'));
+  setText('markLabel',state.asset.source==='mexc'?'Fair':'Mark');
+  setText('oiLabel',state.asset.source==='mexc'?'OI*':'OI');
   const c=state.ctxByCoin.get(state.asset.symbol), live=Number.isFinite(state.latestPrice)?state.latestPrice:c?.markPx;
   setText('price',priceFmt(live)); setText('markPx',c?priceFmt(c.markPx):'—'); setText('openInterest',c?money(c.openInterestUsd):'—'); setText('funding',c?pct(c.funding,4):'—');
   const freshest=Math.min(ageMs('ws'),ageMs('meta'));
@@ -149,6 +162,7 @@ function renderBase(){
   const q=dataQualityMetrics(); setText('heroDataQuality',`データ品質 ${q.score}`);
   const qEl=$('heroDataQuality'); if(qEl){qEl.className=`pill quality-${q.score>=70?'good':q.score>=45?'mid':'low'}`;qEl.title=q.missing.length?`不足: ${q.missing.join(', ')}`:'主要データ取得済み';}
   const fEl=$('funding'); if(fEl){const f=Number(c?.funding);setTone(fEl,Number.isFinite(f)?(f>0.0001?'down':f<-0.0001?'up':'neutral'):'neutral');}
+  renderMexcOverview();
 }
 
 
@@ -186,7 +200,21 @@ function marketMomentum(){
 async function fetchMeta(){
   const epoch=currentEpoch(), asset={...state.asset}, symbol=asset.symbol;
   try{
-    if(asset.dex){
+    if(asset.source==='mexc'){
+      const relayBase=(CONFIG.relayBase||'').replace(/\/$/,'');
+      if(!relayBase) throw new Error('Relay not configured');
+      const raw=await fetchJsonWithTimeout(`${relayBase}/mexc/market/${encodeURIComponent(symbol)}`,CONFIG.relayTimeoutMs);
+      if(raw?.error) throw new Error(raw.error);
+      const fair=Number(raw.fairPrice), last=Number(raw.lastPrice), index=Number(raw.indexPrice), oiUsd=Number(raw.openInterestUsd), funding=Number(raw.fundingRate);
+      const c={markPx:Number.isFinite(fair)?fair:last,funding,openInterestUsd:oiUsd,indexPrice:index,lastPrice:last,basis:Number(raw.basis),riseFallRate:Number(raw.riseFallRate),high24:Number(raw.high24Price),low24:Number(raw.lower24Price),amount24:Number(raw.amount24),holdVol:Number(raw.holdVol),contractSize:Number(raw.contractSize),apiSymbol:raw.apiSymbol||asset.apiSymbol};
+      if(!Number.isFinite(c.markPx)) throw new Error('Invalid MEXC market response');
+      state.ctxByCoin.set(symbol,c);
+      if(requestStillCurrent(epoch,symbol)){
+        state.latestPrice=Number.isFinite(last)?last:c.markPx;
+        saveMarketSnapshot(symbol,c,state.latestPrice); markFresh('meta',Number(raw.timestamp)||Date.now()); state.sourceErrors.meta=null;
+        setStatus('online','MEXC');
+      }
+    }else if(asset.dex){
       const relayBase=(CONFIG.relayBase||'').replace(/\/$/,'');
       if(!relayBase) throw new Error('Relay not configured');
       const raw=await fetchJsonWithTimeout(`${relayBase}/market/${encodeURIComponent(symbol)}`,CONFIG.relayTimeoutMs);
@@ -225,6 +253,11 @@ async function fetchMeta(){
 
 function connectWs(force=false){
   if(force && state.ws){ try{state.ws.onclose=null;state.ws.onmessage=null;state.ws.close();}catch{} state.ws=null; }
+  if(state.asset.source==='mexc'){
+    if(state.ws){try{state.ws.onclose=null;state.ws.close();}catch{} state.ws=null;}
+    state.lastWsAt=Date.now(); setStatus('online','MEXC'); setText('statusWs','MEXC REST');
+    return;
+  }
   if(state.ws && (state.ws.readyState===0 || state.ws.readyState===1)) return;
   const epoch=currentEpoch(), symbol=state.asset.symbol, coin=state.asset.apiCoin||symbol, isDex=Boolean(state.asset.dex);
   setStatus('offline','接続中'); setText('statusWs','接続中');
@@ -257,12 +290,17 @@ function connectWs(force=false){
 function ingestTrades(trades){
   const now=Date.now();
   for(const t of trades){
-    const px=Number(t.px), sz=Number(t.sz), ts=Number(t.time)||now;
+    const px=Number(t.px), sz=Number(t.sz), ts=Number(t.time)||now, key=t.key||t.id||null;
     if(!Number.isFinite(px)||!Number.isFinite(sz)) continue;
+    if(key && state.tradeSeenKeys.has(String(key))) continue;
+    if(key) state.tradeSeenKeys.set(String(key),ts);
     state.tradeEvents.push({ts,usd:px*sz,buy:t.side==='B',price:px});
     state.latestPrice=px;
   }
-  state.tradeEvents=state.tradeEvents.filter(x=>x.ts>=now-CONFIG.maxTradeWindowMs);
+  const cutoff=now-CONFIG.maxTradeWindowMs;
+  state.tradeEvents=state.tradeEvents.filter(x=>x.ts>=cutoff);
+  for(const [k,ts] of state.tradeSeenKeys){ if(ts<cutoff) state.tradeSeenKeys.delete(k); }
+  if(state.tradeSeenKeys.size>6000){ const entries=[...state.tradeSeenKeys.entries()].sort((a,b)=>a[1]-b[1]).slice(-4000);state.tradeSeenKeys=new Map(entries); }
   renderFlow(); renderBase(); renderPressure(); renderDecisionEngine(); renderWhaleOrderMap();
 }
 
@@ -278,6 +316,36 @@ function renderFlow(){
   setText('buyUsd',money(f.buy)); setText('sellUsd',money(f.sell));
   setText('buyUsd2',money(f.buy)); setText('sellUsd2',money(f.sell));
   setText('tradeCount',`${f.count.toLocaleString()} trades`);
+}
+
+async function fetchExternalTrades(){
+  const epoch=currentEpoch(), asset={...state.asset}, symbol=asset.symbol;
+  if(asset.source!=='mexc') return;
+  const relayBase=(CONFIG.relayBase||'').replace(/\/$/,'');
+  if(!relayBase) return;
+  try{
+    const raw=await fetchJsonWithTimeout(`${relayBase}/mexc/deals/${encodeURIComponent(symbol)}`,CONFIG.relayTimeoutMs);
+    if(!requestStillCurrent(epoch,symbol)) return;
+    const trades=Array.isArray(raw?.trades)?raw.trades:[];
+    if(trades.length) ingestTrades(trades);
+    const ts=Number(raw?.timestamp)||Date.now(); state.lastExternalTradeAt=ts; state.lastWsAt=ts; markFresh('ws',ts); state.sourceErrors.ws=null;
+    setStatus('online','MEXC'); setText('statusWs','MEXC LIVE'); renderBase(); renderMexcOverview();
+  }catch(err){
+    if(!requestStillCurrent(epoch,symbol)) return;
+    state.sourceErrors.ws=String(err?.message||err); setText('statusWs','MEXC取得失敗'); console.warn('mexc deals',err);
+  }
+}
+
+async function fetchExternalCandles(){
+  const epoch=currentEpoch(), asset={...state.asset}, symbol=asset.symbol;
+  if(asset.source!=='mexc') return;
+  const relayBase=(CONFIG.relayBase||'').replace(/\/$/,''); if(!relayBase) return;
+  try{
+    const raw=await fetchJsonWithTimeout(`${relayBase}/mexc/kline/${encodeURIComponent(symbol)}?interval=Min1&hours=6`,CONFIG.relayTimeoutMs);
+    if(!requestStillCurrent(epoch,symbol)) return;
+    const rows=Array.isArray(raw?.candles)?raw.candles:[];
+    state.externalCandles=rows.map(x=>({ts:Number(x.ts),o:Number(x.o),h:Number(x.h),l:Number(x.l),c:Number(x.c)})).filter(x=>[x.ts,x.o,x.h,x.l,x.c].every(Number.isFinite));
+  }catch(err){ if(requestStillCurrent(epoch,symbol)) console.warn('mexc kline',err); }
 }
 
 async function fetchJsonWithTimeout(url,timeoutMs=10000){
@@ -320,9 +388,9 @@ async function fetchOrderBook(){
   const relayBase=(CONFIG.relayBase||'').replace(/\/$/,'');
   let raw=null,err=null;
   if(relayBase){
-    try{ raw=await fetchJsonWithTimeout(`${relayBase}/book/${encodeURIComponent(symbol)}`,CONFIG.relayTimeoutMs); }catch(e){err=e;}
+    try{ raw=await fetchJsonWithTimeout(asset.source==='mexc'?`${relayBase}/mexc/book/${encodeURIComponent(symbol)}`:`${relayBase}/book/${encodeURIComponent(symbol)}`,CONFIG.relayTimeoutMs); }catch(e){err=e;}
   }
-  if(!raw){
+  if(!raw && asset.source!=='mexc'){
     try{ raw=await postInfoJson({type:'l2Book',coin:asset.apiCoin||symbol,nSigFigs:5}); }catch(e){err=e;}
   }
   if(!requestStillCurrent(epoch,symbol)) return;
@@ -339,7 +407,7 @@ function estimatedTriggerZones(){
   if(!ob||!Number.isFinite(spot)) return null;
   const asks=ob.wideAsks?.length?ob.wideAsks:ob.asks;
   const bids=ob.wideBids?.length?ob.wideBids:ob.bids;
-  const maxDistance=isCryptoAsset()?0.08:0.03;
+  const maxDistance=state.asset.source==='mexc'?0.10:(isCryptoAsset()?0.08:0.03);
   const choose=(rows,dir)=>{
     const filtered=rows.filter(x=>{const d=(x.price/spot)-1; return dir==='up'?(d>0&&d<=maxDistance):(d<0&&d>=-maxDistance);});
     if(!filtered.length) return null;
@@ -422,13 +490,16 @@ function selectWhaleWalls(rows){
     .map(x=>({price:x.price,notional:x.notional,side:x.side,n:x.n||null}));
 }
 function whaleTier(notional){
-  if(notional>=100000000) return {label:'MEGA',width:10,alpha:.98};
-  if(notional>=50000000) return {label:'XL',width:8,alpha:.94};
-  if(notional>=25000000) return {label:'L',width:6.5,alpha:.90};
-  if(notional>=10000000) return {label:'M',width:5,alpha:.84};
-  if(notional>=5000000) return {label:'S',width:3.8,alpha:.76};
+  const t=whaleConfig()?.tierNotionals;
+  const levels=Array.isArray(t)&&t.length===5?t:[100000000,50000000,25000000,10000000,5000000];
+  if(notional>=levels[0]) return {label:'MEGA',width:10,alpha:.98};
+  if(notional>=levels[1]) return {label:'XL',width:8,alpha:.94};
+  if(notional>=levels[2]) return {label:'L',width:6.5,alpha:.90};
+  if(notional>=levels[3]) return {label:'M',width:5,alpha:.84};
+  if(notional>=levels[4]) return {label:'S',width:3.8,alpha:.76};
   return {label:'',width:2.4,alpha:.66};
 }
+function whaleStrongWallNotional(){ return Number(whaleConfig()?.strongWall)||10000000; }
 function mergeWhaleBands(walls,spot){
   const cfg=whaleConfig(); if(!cfg) return [];
   const bucket=Math.max(Number(cfg.bucket)||1,Number.EPSILON), map=new Map();
@@ -489,6 +560,9 @@ function whalePricePoints(start,end){
   return pts.sort((a,b)=>a.ts-b.ts);
 }
 function whaleCandles(start,end){
+  if(state.asset.source==='mexc'&&state.externalCandles.length){
+    return state.externalCandles.filter(c=>c.ts>=start&&c.ts<=end).sort((a,b)=>a.ts-b.ts);
+  }
   const pts=whalePricePoints(start,end), bucket=5*60*1000, map=new Map();
   for(const p of pts){ const k=Math.floor(p.ts/bucket)*bucket; let c=map.get(k); if(!c){c={ts:k,o:p.price,h:p.price,l:p.price,c:p.price};map.set(k,c);} else {c.h=Math.max(c.h,p.price);c.l=Math.min(c.l,p.price);c.c=p.price;} }
   return [...map.values()].sort((a,b)=>a.ts-b.ts);
@@ -521,15 +595,15 @@ function renderWhaleCanvas(metrics){
   const maxN=Math.max(1,...tracks.map(t=>t.maxNotional||t.lastNotional||0),...(metrics?.walls||[]).map(x=>x.notional||0));
   for(const t of tracks){
     const x1=tx(Math.max(start,t.firstSeen)),x2=tx(Math.min(end,t.endedAt||end)),y=py(t.price),n=t.maxNotional||t.lastNotional||0,active=!t.endedAt,tier=whaleTier(n),strength=Math.sqrt(n/maxN),base=t.side==='sell'?[255,72,100]:[37,211,154];
-    if(active&&n>=10000000){ctx.strokeStyle=`rgba(${base[0]},${base[1]},${base[2]},${Math.min(.18,.05+.12*strength)})`;ctx.lineWidth=Math.max(12,tier.width*2.2);ctx.beginPath();ctx.moveTo(x1,y);ctx.lineTo(x2,y);ctx.stroke();}
+    if(active&&n>=whaleStrongWallNotional()){ctx.strokeStyle=`rgba(${base[0]},${base[1]},${base[2]},${Math.min(.18,.05+.12*strength)})`;ctx.lineWidth=Math.max(12,tier.width*2.2);ctx.beginPath();ctx.moveTo(x1,y);ctx.lineTo(x2,y);ctx.stroke();}
     ctx.strokeStyle=`rgba(${base[0]},${base[1]},${base[2]},${Math.min(1,(active?.32:.10)+tier.alpha*.58*strength)})`;ctx.lineWidth=active?Math.max(tier.width,2.2+7.5*strength):Math.max(1.3,tier.width*.45);if(!active)ctx.setLineDash([7,5]);ctx.beginPath();ctx.moveTo(x1,y);ctx.lineTo(x2,y);ctx.stroke();ctx.setLineDash([]);
-    if(active&&x2-x1>34&&n>=5000000&&canPlaceLabel(y)){ctx.fillStyle=t.side==='sell'?'rgba(255,126,145,.94)':'rgba(96,230,187,.94)';ctx.font='7px -apple-system,BlinkMacSystemFont,sans-serif';ctx.fillText(`${tier.label?`${tier.label} `:''}${money(n)}`,Math.min(Math.max(pad.l+4,x2-54),pad.l+iw-52),y-5);}
+    if(active&&x2-x1>34&&n>=Math.max(Number(whaleConfig()?.minNotional)||0,whaleStrongWallNotional()/2)&&canPlaceLabel(y)){ctx.fillStyle=t.side==='sell'?'rgba(255,126,145,.94)':'rgba(96,230,187,.94)';ctx.font='7px -apple-system,BlinkMacSystemFont,sans-serif';ctx.fillText(`${tier.label?`${tier.label} `:''}${money(n)}`,Math.min(Math.max(pad.l+4,x2-54),pad.l+iw-52),y-5);}
   }
   const currentBands=mergeWhaleBands(metrics?.walls||[],spot).filter(b=>Math.abs(b.price-spot)<=displayRange).slice(0,20);
   for(const b of currentBands){
     const y=py(b.price),tier=whaleTier(b.notional),base=b.side==='sell'?[255,72,100]:[37,211,154],x1=pad.l+iw*.73,x2=pad.l+iw;
     ctx.strokeStyle=`rgba(${base[0]},${base[1]},${base[2]},${tier.alpha})`;ctx.lineWidth=tier.width;ctx.beginPath();ctx.moveTo(x1,y);ctx.lineTo(x2,y);ctx.stroke();
-    if(b.notional>=10000000&&canPlaceLabel(y)){ctx.fillStyle=`rgba(${base[0]},${base[1]},${base[2]},.96)`;ctx.font='7px -apple-system,BlinkMacSystemFont,sans-serif';ctx.fillText(`${money(b.notional)} @ ${priceFmt(b.price).replace('$','')}`,Math.max(pad.l,x1-92),y-5);}
+    if(b.notional>=whaleStrongWallNotional()&&canPlaceLabel(y)){ctx.fillStyle=`rgba(${base[0]},${base[1]},${base[2]},.96)`;ctx.font='7px -apple-system,BlinkMacSystemFont,sans-serif';ctx.fillText(`${money(b.notional)} @ ${priceFmt(b.price).replace('$','')}`,Math.max(pad.l,x1-92),y-5);}
   }
   const candles=whaleCandles(start,end),candleW=Math.max(2,Math.min(7,iw/Math.max(20,candles.length)*.62));
   for(const c of candles){ if(c.h<minP||c.l>maxP)continue;const x=tx(c.ts+2.5*60*1000),up=c.c>=c.o,col=up?'#35c99b':'#e45770';ctx.strokeStyle=col;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x,py(c.h));ctx.lineTo(x,py(c.l));ctx.stroke();const y1=py(Math.max(c.o,c.c)),y2=py(Math.min(c.o,c.c));ctx.fillStyle=col;ctx.fillRect(x-candleW/2,y1,candleW,Math.max(1,y2-y1)); }
@@ -548,6 +622,7 @@ function renderWhaleOrderMap(){
   const card=$('btcWhaleCard'); if(!card) return; if(!state.asset.orderMap){card.classList.add('hidden');return;} card.classList.remove('hidden');
   const cfg=whaleConfig(), displayRange=whaleDisplayRangeUsd(), zoom=whaleChartZoom();
   setText('whaleTitle',cfg.title); setText('whaleSubtitle',cfg.subtitle); setText('whaleLegendPrice',`${state.asset.symbol}価格`);
+  setText('whaleHint',state.asset.source==='mexc'?'赤=大口売り指値、緑=大口買い指値。MEXC Futures公開L2板をLiqPulseが継続観測して可視化します。消失壁は板が見えなくなった推定で、約定・キャンセルの断定ではありません。実清算ラインではありません。':'赤=大口売り指値、緑=大口買い指値。横方向の長さ=壁が観測され続けた時間、線の太さ=最大注文額です。「消失壁」は前回まで存在した板が消えたことを示す推定で、約定・キャンセルの断定ではありません。CoinGlass等の取引所横断データではなくHyperliquid L2由来です。');
   const canvas=$('whaleCanvas'); if(canvas) canvas.setAttribute('aria-label',`${state.asset.symbol} 大口注文マップ`);
   setText('whaleRangeStatus',`表示 ±$${rangeCompact(displayRange)} / 収集 ±$${rangeCompact(cfg.capture)} / ${zoom===1?'標準':zoom===1.35?'拡大':'最大'}`);
   setText('whaleSellTotalMeta',`収集範囲 ±$${rangeCompact(cfg.capture)}`); setText('whaleBuyTotalMeta',`収集範囲 ±$${rangeCompact(cfg.capture)}`);
@@ -555,10 +630,10 @@ function renderWhaleOrderMap(){
   const m=whaleMetrics(); if(!m){setText('whalePressureBadge','取得中');setText('whaleBookAge','—');setText('whaleOrderList','');return;}
   const fmt=x=>x?priceFmt(x.price):'—'; setText('whaleNearestSell',fmt(m.nearestSell)); setText('whaleNearestBuy',fmt(m.nearestBuy));
   setText('whaleNearestSellMeta',m.nearestSell?`+${((m.nearestSell.price/m.spot-1)*100).toFixed(2)}% / ${money(m.nearestSell.notional)}`:'—'); setText('whaleNearestBuyMeta',m.nearestBuy?`${((m.nearestBuy.price/m.spot-1)*100).toFixed(2)}% / ${money(m.nearestBuy.notional)}`:'—'); setText('whaleSellTotal',money(m.sellTotal)); setText('whaleBuyTotal',money(m.buyTotal));
-  const total=m.sellTotal+m.buyTotal,sellPct=total?m.sellTotal/total:.5,badge=$('whalePressureBadge'); let label='均衡',tone='neutral'; if(sellPct>=.62){label='売り壁優勢';tone='down';}else if(sellPct<=.38){label='買い壁優勢';tone='up';} if(badge){badge.textContent=label;badge.className=`signal-badge ${tone}`;} setText('whaleBookAge','LIVE + 履歴');
+  const total=m.sellTotal+m.buyTotal,sellPct=total?m.sellTotal/total:.5,badge=$('whalePressureBadge'); let label='均衡',tone='neutral'; if(sellPct>=.62){label='売り壁優勢';tone='down';}else if(sellPct<=.38){label='買い壁優勢';tone='up';} if(badge){badge.textContent=label;badge.className=`signal-badge ${tone}`;} setText('whaleBookAge',state.asset.source==='mexc'?'MEXC LIVE + 履歴':'LIVE + 履歴');
   let insight='大口板は拮抗しています。'; if(sellPct>=.62) insight=`上側の大口売り壁が優勢 (${(sellPct*100).toFixed(0)}%)。壁が長時間残るか、吸収・消失するかを監視。`; else if(sellPct<=.38) insight=`下側の大口買い壁が優勢 (${((1-sellPct)*100).toFixed(0)}%)。買い支えの継続時間と壁の消失を監視。`;
   if(m.nearestSell&&Math.abs(m.nearestSell.price/m.spot-1)<.004) insight+=' 直上0.4%以内に大口売り壁あり。'; if(m.nearestBuy&&Math.abs(m.nearestBuy.price/m.spot-1)<.004) insight+=' 直下0.4%以内に大口買い壁あり。';
-  const bands=mergeWhaleBands(m.walls,m.spot),topSell=bands.filter(x=>x.side==='sell'&&x.price>m.spot)[0],topBuy=bands.filter(x=>x.side==='buy'&&x.price<m.spot)[0]; if(topSell&&topSell.notional>=10000000) insight+=` 強い上壁 ${priceFmt(topSell.price)} (${money(topSell.notional)})。`; if(topBuy&&topBuy.notional>=10000000) insight+=` 強い下壁 ${priceFmt(topBuy.price)} (${money(topBuy.notional)})。`; setText('whaleInsight',insight);
+  const bands=mergeWhaleBands(m.walls,m.spot),topSell=bands.filter(x=>x.side==='sell'&&x.price>m.spot)[0],topBuy=bands.filter(x=>x.side==='buy'&&x.price<m.spot)[0]; if(topSell&&topSell.notional>=whaleStrongWallNotional()) insight+=` 強い上壁 ${priceFmt(topSell.price)} (${money(topSell.notional)})。`; if(topBuy&&topBuy.notional>=whaleStrongWallNotional()) insight+=` 強い下壁 ${priceFmt(topBuy.price)} (${money(topBuy.notional)})。`; setText('whaleInsight',insight);
   const list=$('whaleOrderList'); if(list){list.textContent='';const top=[...m.walls].sort((a,b)=>b.notional-a.notional).slice(0,10),max=Math.max(1,...top.map(x=>x.notional));for(const x of top){const row=document.createElement('div');row.className=`whale-order-row ${x.side}`;const p=document.createElement('b');p.textContent=priceFmt(x.price);const bar=document.createElement('div');bar.className='bar';const i=document.createElement('i');i.style.width=`${Math.max(4,100*x.notional/max)}%`;bar.appendChild(i);const val=document.createElement('strong');val.textContent=money(x.notional);const ds=document.createElement('small');const d=(x.price/m.spot-1)*100,tr=activeTrackForWall(x,m.spot);ds.textContent=`${d>=0?'+':''}${d.toFixed(2)}% · ${tr?formatDuration(Date.now()-tr.firstSeen):'new'}`;row.append(p,bar,val,ds);list.appendChild(row);}}
   renderWhaleCanvas(m);
 }
@@ -972,7 +1047,7 @@ function renderRadar(){
     setText('shortMomentum','実清算ではありません'); setText('longMomentum','実清算ではありません');
     const side=ez.bidPct>=.58?'買い板優勢':ez.askPct>=.58?'売り板優勢':'板均衡';
     setText('radarBiasBadge','L2推定');
-    setText('radarReason',`${side}。実清算データがないため、HyperliquidのL2板から近い大口反応帯を推定表示しています。清算価格・利確価格を直接観測したものではありません。`); return;
+    setText('radarReason',`${side}。実清算データがないため、${state.asset.source==='mexc'?'MEXC Futures':'Hyperliquid'}のL2板から近い大口反応帯を推定表示しています。清算価格・利確価格を直接観測したものではありません。`); return;
   }
   ['nearestShort','nearestLong','short5Total','long5Total'].forEach(id=>setText(id,'—'));
   setText('nearestShortMeta','—');setText('nearestLongMeta','—');setText('shortMomentum','—');setText('longMomentum','—');setText('radarBiasBadge','分析待ち');setText('radarReason','清算またはL2板データ取得後に表示します。');
@@ -990,8 +1065,9 @@ function renderHeatmap(){
   const host=$('heatmap'), note=$('heatmapNotice'), summary=$('clusterSummary');
   host.textContent=''; note.classList.add('hidden'); summary.classList.add('hidden'); summary.textContent=''; renderRadar();
   if(!state.asset.heatmap){
-    note.textContent=`${state.asset.symbol}の実清算クラスターは上流ソースから取得できませんでした。価格・OI・Funding・Taker・Long/Shortは引き続きリアルタイム表示します。`;
-    note.classList.remove('hidden'); setText('heatmapAge','未対応'); return;
+    if(state.asset.source==='mexc') note.textContent=`${state.asset.symbol}はMEXC公開APIで実清算クラスターが提供されないため、MEXC L2板の推定反応帯・Taker・OI・Funding・Index乖離を使って分析します。推定反応帯は強制清算価格ではありません。`;
+    else note.textContent=`${state.asset.symbol}の実清算クラスターは上流ソースから取得できませんでした。取得可能な価格・OI・Funding・Taker・L2板を使って分析します。`;
+    note.classList.remove('hidden'); setText('heatmapAge',state.asset.source==='mexc'?'MEXC L2':'未対応'); return;
   }
   if(!state.heatmap?.levels?.length){
     if(state.orderbook){
@@ -1152,6 +1228,7 @@ function dataQualityMetrics(){
     add('清算/反応帯',18,liqScore);
   }
   if(asset.symbol==='SP500') add('市場内部',26,state.sp500Map?.rows?.length?freshnessScore('sp500',180000,900000):0);
+  if(asset.source==='mexc') add('Index乖離',12,ctx&&Number.isFinite(ctx.basis)?freshnessScore('meta',60000,240000):0);
   const total=items.reduce((a,x)=>a+x.weight,0)||1;
   const score=Math.round(items.reduce((a,x)=>a+x.weight*x.score,0)/total*100);
   const missing=items.filter(x=>x.score<0.25).map(x=>x.name);
@@ -1189,6 +1266,10 @@ function decisionMetrics(){
   if(Number.isFinite(funding)){
     const score=clamp(-funding/0.0003,-1,1);
     add('Funding',score,.08,`Funding ${pct(funding,4)}`);
+  }
+  if(state.asset.source==='mexc'&&Number.isFinite(Number(ctx?.basis))){
+    const basis=Number(ctx.basis), score=clamp(-basis/0.006,-1,1);
+    add('Index乖離',score,.10,`MEXC/Index乖離 ${basis>=0?'+':''}${(basis*100).toFixed(2)}%`);
   }
   if(mm&&Number.isFinite(mm.priceChange)&&Number.isFinite(mm.oiChange)){
     const priceStrength=clamp(Math.abs(mm.priceChange)/0.012,0,1), oiStrength=clamp(Math.abs(mm.oiChange)/0.025,0,1);
@@ -1245,21 +1326,47 @@ function quickDecision(){
 function renderQuickSignalGrid(d){
   const flow=flowTotals(), bp=flow.total?flow.buy/flow.total:NaN;
   const pos=state.positioning?.global||state.positioning?.topPositions;
-  const f=Number(state.ctxByCoin.get(state.asset.symbol)?.funding), mm=d.mm;
+  const ctx=state.ctxByCoin.get(state.asset.symbol), f=Number(ctx?.funding), mm=d.mm;
   setText('quickTaker',Number.isFinite(bp)?`${(bp*100).toFixed(1)} / ${((1-bp)*100).toFixed(1)}`:'—');
   setText('quickTakerMeta',Number.isFinite(bp)?`BUY / SELL · ${state.flowWindowMs/60000}分`:'取引データ待ち'); setTone($('quickTaker'),Number.isFinite(bp)?(bp>.55?'up':bp<.45?'down':'neutral'):'neutral');
-  setText('quickPositioning',pos?`L ${Math.round(pos.long*100)} / S ${Math.round(pos.short*100)}`:'—');
-  setText('quickPositioningMeta',pos?`${state.positioning?.sources?.global||'公開統計'} · 混雑度 L/S ${Number.isFinite(pos.ratio)?pos.ratio.toFixed(2):'—'}`:'公開統計待ち'); setTone($('quickPositioning'),'neutral');
+  if(state.asset.source==='mexc'){
+    const basis=Number(ctx?.basis); setText('quickPositioningLabel','Index乖離');
+    setText('quickPositioning',Number.isFinite(basis)?`${basis>=0?'+':''}${(basis*100).toFixed(2)}%`:'—');
+    setText('quickPositioningMeta',Number.isFinite(Number(ctx?.indexPrice))?`Index ${priceFmt(Number(ctx.indexPrice))}`:'Index取得待ち');
+    setTone($('quickPositioning'),Number.isFinite(basis)?(basis>0.005?'down':basis<-0.005?'up':'neutral'):'neutral');
+  }else{
+    setText('quickPositioningLabel','Long / Short');
+    setText('quickPositioning',pos?`L ${Math.round(pos.long*100)} / S ${Math.round(pos.short*100)}`:'—');
+    setText('quickPositioningMeta',pos?`${state.positioning?.sources?.global||'公開統計'} · 混雑度 L/S ${Number.isFinite(pos.ratio)?pos.ratio.toFixed(2):'—'}`:'公開統計待ち'); setTone($('quickPositioning'),'neutral');
+  }
   let fs='中立',ft='neutral'; if(Number.isFinite(f)){if(f>0.0001){fs='Long過熱';ft='down';}else if(f<-0.0001){fs='Short過熱';ft='up';}}
   setText('quickFunding',Number.isFinite(f)?pct(f,4):'—'); setText('quickFundingMeta',Number.isFinite(f)?fs:'取得待ち'); setTone($('quickFunding'),ft);
   setText('quickOi',mm&&Number.isFinite(mm.oiChange)?`${mm.oiChange>=0?'+':''}${(mm.oiChange*100).toFixed(2)}%`:'—');
   setText('quickOiMeta',mm&&Number.isFinite(mm.priceChange)?`価格 ${mm.priceChange>=0?'+':''}${(mm.priceChange*100).toFixed(2)}%`:'15分履歴を蓄積中'); setTone($('quickOi'),mm&&Number.isFinite(mm.oiChange)?(mm.oiChange>0?'up':mm.oiChange<0?'down':'neutral'):'neutral');
 }
+function renderMexcOverview(){
+  const card=$('mexcStockCard'); if(!card) return;
+  const active=state.asset.source==='mexc'; card.classList.toggle('hidden',!active); if(!active) return;
+  const c=state.ctxByCoin.get(state.asset.symbol)||{};
+  const basis=Number(c.basis), rise=Number(c.riseFallRate), high=Number(c.high24), low=Number(c.low24), index=Number(c.indexPrice), fair=Number(c.markPx);
+  setText('mexcContractName',c.apiSymbol||state.asset.apiSymbol||'KIOXIASTOCK_USDT');
+  setText('mexcIndexPrice',priceFmt(index)); setText('mexcFairPrice',priceFmt(fair));
+  setText('mexcBasis',Number.isFinite(basis)?`${basis>=0?'+':''}${(basis*100).toFixed(2)}%`:'—'); setTone($('mexcBasis'),Number.isFinite(basis)?(basis>0.005?'down':basis<-0.005?'up':'neutral'):'neutral');
+  setText('mexc24Change',Number.isFinite(rise)?`${rise>=0?'+':''}${(rise*100).toFixed(2)}%`:'—'); setTone($('mexc24Change'),Number.isFinite(rise)?(rise>0?'up':rise<0?'down':'neutral'):'neutral');
+  setText('mexc24Range',Number.isFinite(high)&&Number.isFinite(low)?`${priceFmt(low)} – ${priceFmt(high)}`:'—');
+  setText('mexcTurnover',money(Number(c.amount24)));
+  let risk='Index乖離は通常範囲'; let tone='neutral';
+  if(Number.isFinite(basis)&&Math.abs(basis)>=0.015){risk=`Index乖離 ${(basis*100).toFixed(2)}%：急変・スプレッド拡大に注意`;tone='down';}
+  else if(Number.isFinite(basis)&&Math.abs(basis)>=0.006){risk=`Index乖離 ${(basis*100).toFixed(2)}%：やや拡大`;tone=basis>0?'down':'up';}
+  setText('mexcRiskStrip',risk); const strip=$('mexcRiskStrip'); if(strip) strip.className=`mexc-risk-strip ${tone}`;
+}
+
 function renderQuickView(){
   const q=quickDecision(),{d,radar}=q,actualLiq=Boolean(state.heatmap?.levels?.length);
   const liqTitle=document.querySelector('.quick-liq-title');
-  if(liqTitle) liqTitle.textContent=actualLiq?'直近の実清算ライン':'直近の推定反応ライン';
-  setText('quickLineMode',actualLiq?'実清算':'L2推定');
+  const mexc=state.asset.source==='mexc';
+  if(liqTitle) liqTitle.textContent=actualLiq?'直近の実清算ライン':(mexc?'直近のMEXC L2反応ライン':'直近の推定反応ライン');
+  setText('quickLineMode',actualLiq?'実清算':(mexc?'MEXC L2':'L2推定'));
   setText('quickDominance',q.dominance); setText('quickDominanceMeta',`LONG ${Math.round(d.up)} / SHORT ${Math.round(d.down)}`);
   setText('quickAction',q.action); setText('quickActionMeta',`信頼度 ${d.confidence}%`);
   setTone($('quickDominance'),q.dominanceTone); setTone($('quickAction'),q.actionTone);
@@ -1271,8 +1378,8 @@ function renderQuickView(){
   const ez=estimatedTriggerZones();
   const shortLine=radar?.nearestShort || ez?.up || null, longLine=radar?.nearestLong || ez?.down || null;
   const refSpot=radar?.spot||state.latestPrice||state.ctxByCoin.get(state.asset.symbol)?.markPx;
-  if(shortLine){const ds=Math.abs(distPct(shortLine.price,refSpot));setText('quickShortLine',priceFmt(shortLine.price));setText('quickShortLineMeta',`${actualLiq?'実清算':'L2推定'}${Number.isFinite(ds)?` · +${(ds*100).toFixed(2)}%`:''} · ${money(shortLine.notional)}`);} else {setText('quickShortLine','—');setText('quickShortLineMeta','上側データ待ち');}
-  if(longLine){const dl=Math.abs(distPct(longLine.price,refSpot));setText('quickLongLine',priceFmt(longLine.price));setText('quickLongLineMeta',`${actualLiq?'実清算':'L2推定'}${Number.isFinite(dl)?` · -${(dl*100).toFixed(2)}%`:''} · ${money(longLine.notional)}`);} else {setText('quickLongLine','—');setText('quickLongLineMeta','下側データ待ち');}
+  if(shortLine){const ds=Math.abs(distPct(shortLine.price,refSpot));setText('quickShortLine',priceFmt(shortLine.price));setText('quickShortLineMeta',`${actualLiq?'実清算':(mexc?'MEXC L2':'L2推定')}${Number.isFinite(ds)?` · +${(ds*100).toFixed(2)}%`:''} · ${money(shortLine.notional)}`);} else {setText('quickShortLine','—');setText('quickShortLineMeta','上側データ待ち');}
+  if(longLine){const dl=Math.abs(distPct(longLine.price,refSpot));setText('quickLongLine',priceFmt(longLine.price));setText('quickLongLineMeta',`${actualLiq?'実清算':(mexc?'MEXC L2':'L2推定')}${Number.isFinite(dl)?` · -${(dl*100).toFixed(2)}%`:''} · ${money(longLine.notional)}`);} else {setText('quickLongLine','—');setText('quickLongLineMeta','下側データ待ち');}
 
   let advice='方向感は拮抗。条件が揃うまで待機。';
   if(q.action.startsWith('LONG')) advice=`LONG側の条件が優勢。直上ラインとTaker継続を確認し、崩れたら再判定。`;
@@ -1318,6 +1425,8 @@ function setupTimers(){
   state.timers.push(setInterval(fetchPositioning,CONFIG.positioningPollMs));
   state.timers.push(setInterval(fetchOrderBook,CONFIG.orderBookPollMs));
   state.timers.push(setInterval(fetchSp500Map,CONFIG.sp500MapPollMs));
+  state.timers.push(setInterval(fetchExternalTrades,CONFIG.mexcTradesPollMs));
+  state.timers.push(setInterval(fetchExternalCandles,CONFIG.mexcKlinePollMs));
   state.timers.push(setInterval(()=>{
     state.tradeEvents=state.tradeEvents.filter(x=>x.ts>=Date.now()-CONFIG.maxTradeWindowMs);
     renderFlow(); renderPressure(); renderDecisionEngine(); renderQuickView(); renderBase();
@@ -1368,7 +1477,7 @@ function clearRelay(){
   const msg=$('relayTestResult'); if(msg) msg.textContent='標準Relay URLに戻しました。';
 }
 
-$('refreshBtn').addEventListener('click',()=>Promise.allSettled([fetchMeta(),fetchHeatmap(),fetchPositioning(),fetchOrderBook(),fetchSp500Map()]));
+$('refreshBtn').addEventListener('click',()=>Promise.allSettled([fetchMeta(),fetchHeatmap(),fetchPositioning(),fetchOrderBook(),fetchSp500Map(),fetchExternalTrades(),fetchExternalCandles()]));
 $('testRelayBtn')?.addEventListener('click',testRelay);
 $('clearRelayBtn')?.addEventListener('click',clearRelay);
 $('flowWindow').addEventListener('change',(e)=>{ state.flowWindowMs=Number(e.target.value)||300000; renderFlow(); renderPressure(); });
@@ -1376,17 +1485,17 @@ $('clusterDepth')?.addEventListener('change',(e)=>{ state.clusterDepth=Number(e.
 $('sp500MapLimit')?.addEventListener('change',(e)=>{ state.sp500MapLimit=Number(e.target.value)||80; renderSp500Map(); });
 $('advancedToggle')?.addEventListener('click',toggleAdvanced);
 $('diagnosticsToggle')?.addEventListener('click',toggleDiagnostics);
-window.addEventListener('online',()=>{connectWs(true); fetchMeta(); fetchHeatmap(); fetchPositioning(); fetchOrderBook(); fetchSp500Map();});
+window.addEventListener('online',()=>{connectWs(true); fetchMeta(); fetchHeatmap(); fetchPositioning(); fetchOrderBook(); fetchSp500Map(); fetchExternalTrades(); fetchExternalCandles();});
 window.addEventListener('offline',()=>setStatus('error','OFFLINE'));
-document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'){ connectWs(); fetchMeta(); fetchHeatmap(); fetchPositioning(); fetchOrderBook(); fetchSp500Map(); } });
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'){ connectWs(); fetchMeta(); fetchHeatmap(); fetchPositioning(); fetchOrderBook(); fetchSp500Map(); fetchExternalTrades(); fetchExternalCandles(); } });
 
 (async function init(){
   if(state.asset.orderMap){ state.whaleHistory=loadWhaleHistory(); state.whaleTracks=loadWhaleTracks(); }
   state.advancedOpen=localStorage.getItem('liqpulse_advanced_open')==='1';
   state.diagnosticsOpen=localStorage.getItem('liqpulse_diagnostics_open')==='1';
-  renderAssetTabs(); updateAssetSpecificPanels(); renderVisibilityControls(); renderBase(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderQuickView(); renderSp500Command(); renderWhaleOrderMap(); renderRelaySettings();
+  renderAssetTabs(); updateAssetSpecificPanels(); renderVisibilityControls(); renderBase(); renderMexcOverview(); renderFlow(); renderHeatmap(); renderLiqBias(); renderRadar(); renderPositioning(); renderDecisionEngine(); renderQuickView(); renderSp500Command(); renderWhaleOrderMap(); renderRelaySettings();
   connectWs(); setupTimers();
-  await Promise.allSettled([fetchMeta(),fetchHeatmap(),fetchPositioning(),fetchOrderBook(),fetchSp500Map()]);
+  await Promise.allSettled([fetchMeta(),fetchHeatmap(),fetchPositioning(),fetchOrderBook(),fetchSp500Map(),fetchExternalTrades(),fetchExternalCandles()]);
   if('serviceWorker' in navigator){
     try{
       const reg=await navigator.serviceWorker.register('./sw.js');
@@ -1395,4 +1504,4 @@ document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==
   }
 })();
 
-// LiqPulse v2.1.0
+// LiqPulse v2.2.0

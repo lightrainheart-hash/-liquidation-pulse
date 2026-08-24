@@ -11,13 +11,13 @@
 <link href="./manifest.webmanifest" rel="manifest"/>
 <link href="./icon-180.png" rel="apple-touch-icon"/>
 <link href="./styles.css" rel="stylesheet"/>
-<title>LiqPulse v2.1.0</title>
+<title>LiqPulse v2.2.0</title>
 </head>
 <body>
 <main class="app-shell">
 <header class="topbar">
 <div>
-<div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v2.1.0</span></div>
+<div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v2.2.0</span></div>
 <h1>LiqPulse</h1>
 </div>
 <div class="status offline" id="connBadge"><span></span><b>接続中</b></div>
@@ -25,15 +25,31 @@
 <section aria-label="銘柄" class="asset-tabs" id="assetTabs"></section>
 <section class="hero card">
 <div>
-<div class="symbol-line"><span id="assetName">Bitcoin</span><small>Hyperliquid</small></div>
+<div class="symbol-line"><span id="assetName">Bitcoin</span><small id="marketSource">Hyperliquid</small></div>
 <div class="price" id="price">—</div>
 <div class="meta-row">
-<span>Mark <b id="markPx">—</b></span>
-<span>OI <b id="openInterest">—</b></span>
+<span><span id="markLabel">Mark</span> <b id="markPx">—</b></span>
+<span><span id="oiLabel">OI</span> <b id="openInterest">—</b></span>
 <span>Funding <b id="funding">—</b></span>
 </div>
 <div class="hero-status-row"><span class="pill" id="heroFreshness">更新待ち</span><span class="pill" id="heroDataQuality">データ品質 —</span></div></div>
 <button aria-label="更新" class="icon-btn" id="refreshBtn">↻</button>
+</section>
+<section class="card mexc-overview-card hidden" id="mexcStockCard">
+<div class="section-head">
+<div><div class="card-title">MEXC Stock Futures</div><div class="subtitle"><span id="mexcContractName">KIOXIASTOCK_USDT</span> / KIOXIA連動先物</div></div>
+<span class="pill">MEXC 24/7</span>
+</div>
+<div class="mexc-overview-grid">
+<div><span>Index</span><b id="mexcIndexPrice">—</b><small>基準価格</small></div>
+<div><span>Fair</span><b id="mexcFairPrice">—</b><small>公正価格</small></div>
+<div><span>Index乖離</span><b id="mexcBasis">—</b><small>Last / Index</small></div>
+<div><span>24h騰落</span><b id="mexc24Change">—</b><small>先物価格</small></div>
+<div><span>24hレンジ</span><b id="mexc24Range">—</b><small>Low – High</small></div>
+<div><span>24h売買代金</span><b id="mexcTurnover">—</b><small>MEXC Futures</small></div>
+</div>
+<div class="mexc-risk-strip neutral" id="mexcRiskStrip">Index乖離を分析中</div>
+<div class="hint">MEXC KIOXIAUSDTの公開先物データです。OI*はMEXCのholdVol × 1枚あたり0.001 KIOXIA × Fair Priceから概算した建玉想定額。実清算クラスターや公開Long/Short口座比ではありません。</div>
 </section>
 <section class="card sp500-command-card hidden" id="sp500CommandCard">
 <div class="section-head">
@@ -90,7 +106,7 @@
 <b id="quickAction">判定待ち</b>
 <small id="quickActionMeta">信頼度 —</small>
 </div>
-</div><div class="quick-signal-grid"><div><span>Taker</span><b id="quickTaker">—</b><small id="quickTakerMeta">取得待ち</small></div><div><span>Long / Short</span><b id="quickPositioning">—</b><small id="quickPositioningMeta">取得待ち</small></div><div><span>Funding</span><b id="quickFunding">—</b><small id="quickFundingMeta">取得待ち</small></div><div><span>OI 15分</span><b id="quickOi">—</b><small id="quickOiMeta">取得待ち</small></div></div>
+</div><div class="quick-signal-grid"><div><span>Taker</span><b id="quickTaker">—</b><small id="quickTakerMeta">取得待ち</small></div><div><span id="quickPositioningLabel">Long / Short</span><b id="quickPositioning">—</b><small id="quickPositioningMeta">取得待ち</small></div><div><span>Funding</span><b id="quickFunding">—</b><small id="quickFundingMeta">取得待ち</small></div><div><span>OI 15分</span><b id="quickOi">—</b><small id="quickOiMeta">取得待ち</small></div></div>
 <div class="quick-liq-heading"><div class="quick-liq-title">直近の清算ライン</div><span class="pill" id="quickLineMode">判定待ち</span></div>
 <div class="quick-liq-grid">
 <div class="quick-liq up">
@@ -140,7 +156,7 @@
 <div class="quick-advice" id="whaleInsight">L2板を蓄積して大口注文の継続・消失を分析します。</div>
 <div class="whale-list-head"><span>現在の大口注文</span><small>上位10件 / 継続時間</small></div>
 <div class="whale-order-list" id="whaleOrderList"></div>
-<div class="hint">赤=大口売り指値、緑=大口買い指値。横方向の長さ=壁が観測され続けた時間、線の太さ=最大注文額です。「消失壁」は前回まで存在した板が消えたことを示す推定で、約定・キャンセルの断定ではありません。CoinGlass等の取引所横断データではなくHyperliquid L2由来です。</div>
+<div class="hint" id="whaleHint">赤=大口売り指値、緑=大口買い指値。横方向の長さ=壁が観測され続けた時間、線の太さ=最大注文額です。</div>
 </section>
 <section class="card sp500-map-card hidden" id="finvizMapCard">
 <div class="section-head">
@@ -329,6 +345,6 @@
 </section>
 <footer>分析専用・注文機能なし。表示される方向・候補は複数の公開市場データを統合した補助シグナルです。実清算データとL2推定反応帯は明確に区別し、取得できない項目は推測値で埋めません。</footer>
 </main>
-<script defer="" src="./app.js?v=2.1.0"></script>
+<script defer="" src="./app.js?v=2.2.0"></script>
 </body>
 </html>

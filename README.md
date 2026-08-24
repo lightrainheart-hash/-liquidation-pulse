@@ -1,32 +1,24 @@
-# LiqPulse v2.1.0
+# LiqPulse v2.2.0
 
-## BTC Whale Order History Map
+## KIOXIA / MEXC Stock Futures
 
-- BTC Whale Order Map display range is current price ±$3,000, while L2 measurement/history capture extends to ±$10,000.
-- Worker combines Hyperliquid L2 books at multiple aggregation granularities (5/3/2 significant figures) so real resting liquidity farther from spot can be visualized without inventing levels.
-- Whale walls are tracked over time in localStorage for up to 6 hours.
-- Chart supports 1H / 3H / 6H history.
-- Horizontal line length = observed wall lifetime; thickness = maximum observed notional.
-- 5-minute BTC candles are drawn behind whale walls.
-- Disappeared walls are shown as dashed/transparent historical segments. Disappearance does not prove cancellation or execution.
-- Current wall list includes estimated observed duration.
+- Adds **KIOXIA** as a first-class LiqPulse tab using MEXC `KIOXIASTOCK_USDT` public Futures market data.
+- Source domain: `https://api.mexc.com` via the existing Cloudflare relay.
+- Uses MEXC Last / Fair / Index / Funding / 24h data and `holdVol`.
+- OI* is an estimated notional: `holdVol × contractSize (0.001 KIOXIA) × Fair Price`.
+- Polls public MEXC recent deals and derives Taker Buy / Sell flow.
+- Adds KIOXIA Whale Order Map from MEXC Futures L2 with 1H / 3H / 6H history.
+- KIOXIA map display ranges: ±5 / ±15 / ±30; collection range: ±80.
+- Adds Index-basis monitoring and uses it as a modest contrarian/overheat input to the AI decision engine.
+- No MEXC API key is required. No order placement is implemented.
+- MEXC does not provide the same public liquidation-cluster / public account L/S data used elsewhere, so LiqPulse labels KIOXIA reaction zones as **MEXC L2 estimates**, never as real liquidation prices.
 
-## Data caveat
+## Existing markets
 
-This is a Hyperliquid-derived order-map, not CoinGlass exchange-wide proprietary whale-order data. Aggregated L2 levels are real order-book aggregates returned by Hyperliquid; LiqPulse does not fabricate distant orders.
+- Cold start remains BTC.
+- BTC / ETH / SOL / SP500 Order Maps remain available.
+- XRP / ZEC / GOLD / SILVER remain supported with their existing public-data fallbacks.
 
 ## Deployment
 
-Upload all files to the GitHub repository and commit to `main`. Cloudflare Workers Builds should deploy automatically.
-
-- v1.3.1: mobile chart display tightened to ±$3,000 while BTC whale-wall collection/storage remains wide at ±$10,000.
-
-- v2.1.0: BTC Whale Map adds ±$1k / ±$3k / ±$5k display-range switches while retaining ±$10k collection. Adds Standard / Large / Max chart-height zoom and automatic label de-cluttering for mobile readability.
-
-
-## v2.1.0
-- Cold start is always BTC.
-- Order Map is available for BTC, ETH, SOL, and SP500.
-- Order Map history, range, and zoom are stored per asset.
-- SP500 Order Map represents Hyperliquid xyz:SP500 perpetual L2 liquidity, not the full cash-index constituent order book.
-- Removed sticky asset-tab overlay that could cover card headings on iPhone.
+Upload **all files** to the GitHub repository and commit to `main`. Cloudflare Workers Builds should deploy automatically. Verify `/health` reports `2.2.0`.

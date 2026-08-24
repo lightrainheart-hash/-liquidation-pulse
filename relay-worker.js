@@ -1,4 +1,4 @@
-// LiqPulse v2.1.0 — Cloudflare Worker relay
+// LiqPulse v2.2.0 — Cloudflare Worker relay
 // Public market data only. No API keys, cookies, or user data are forwarded.
 
 const ALLOWED_HEATMAP_SYMBOLS = new Set(['BTC', 'ETH', 'SOL', 'XRP', 'ZEC']);
@@ -10,6 +10,9 @@ const HEATMAP_UPSTREAM = 'https://trade.hyperperps.app/api/public/heatmap/';
 const BINANCE_FUTURES_DATA = 'https://fapi.binance.com/futures/data/';
 const BYBIT_V5 = 'https://api.bybit.com/v5/market/account-ratio';
 const TRADINGVIEW_SCAN = 'https://scanner.tradingview.com/global/scan';
+const MEXC_FUTURES = 'https://api.mexc.com';
+const MEXC_MARKETS = { KIOXIA:{ candidates:['KIOXIASTOCK_USDT','KIOXIA_USDT'], contractSize:0.001 } };
+
 const ALLOWED_ORIGINS = new Set([
   'https://lightrainheart-hash.github.io',
 ]);
@@ -131,6 +134,51 @@ async function handlePositioning(symbol, headers) {
   }, { headers: { ...headers, 'Cache-Control': 'public, max-age=20' } });
 }
 
+function mexcData(raw){
+  if(!raw || raw.success===false || (raw.code!=null && Number(raw.code)!==0)) throw new Error(`MEXC ${raw?.code ?? 'error'}: ${raw?.message || raw?.msg || 'upstream error'}`);
+  return raw.data ?? raw;
+}
+async function fetchMexcFor(symbol, pathBuilder, cf={}){
+  const cfg=MEXC_MARKETS[symbol]; if(!cfg) throw new Error('unsupported MEXC symbol');
+  let lastError=null;
+  for(const apiSymbol of cfg.candidates){
+    try{
+      const raw=await fetchJson(`${MEXC_FUTURES}${pathBuilder(apiSymbol)}`,cf);
+      const data=mexcData(raw);
+      if(data==null || (Array.isArray(data)&&!data.length)) throw new Error('empty MEXC response');
+      return {apiSymbol,data,cfg};
+    }catch(error){lastError=error;}
+  }
+  throw lastError || new Error('MEXC symbol unavailable');
+}
+function mexcTickerRow(data,apiSymbol){
+  if(Array.isArray(data)) return data.find(x=>String(x?.symbol||'').toUpperCase()===apiSymbol.toUpperCase()) || null;
+  if(data && typeof data==='object'){
+    const sym=String(data.symbol||'').toUpperCase();
+    return !sym || sym===apiSymbol.toUpperCase() ? data : null;
+  }
+  return null;
+}
+async function fetchMexcTicker(symbol){
+  const cfg=MEXC_MARKETS[symbol]; if(!cfg) throw new Error('unsupported MEXC symbol');
+  let lastError=null;
+  for(const apiSymbol of cfg.candidates){
+    try{
+      const raw=await fetchJson(`${MEXC_FUTURES}/api/v1/contract/ticker?symbol=${encodeURIComponent(apiSymbol)}`,{cacheTtl:2,cacheEverything:true});
+      const row=mexcTickerRow(mexcData(raw),apiSymbol); if(!row) throw new Error(`ticker ${apiSymbol} not found`);
+      return {apiSymbol,row,cfg};
+    }catch(error){lastError=error;}
+  }
+  throw lastError || new Error('MEXC ticker unavailable');
+}
+function normalizeMexcDepthRows(rows,contractSize){
+  return (Array.isArray(rows)?rows:[]).map(x=>{
+    const price=Number(Array.isArray(x)?x[0]:x?.price), contracts=Number(Array.isArray(x)?x[1]:x?.vol ?? x?.volume), n=Number(Array.isArray(x)?x[2]:x?.count);
+    const sz=contracts*contractSize;
+    return Number.isFinite(price)&&Number.isFinite(sz)&&sz>0?{px:String(price),sz:String(sz),n:Number.isFinite(n)?n:null}:null;
+  }).filter(Boolean);
+}
+
 export default {
   async fetch(request) {
     const headers = corsHeaders(request);
@@ -139,18 +187,19 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === '/health') {
-      return Response.json({ ok: true, service: 'liqpulse-relay', version: '2.1.0' }, { headers });
+      return Response.json({ ok: true, service: 'liqpulse-relay', version: '2.2.0' }, { headers });
     }
 
     if (url.pathname === '/capabilities') {
       return Response.json({
-        version: '2.1.0',
-        market: ['BTC','ETH','SOL','XRP','ZEC','SP500','GOLD','SILVER'],
+        version: '2.2.0',
+        market: ['BTC','ETH','SOL','XRP','ZEC','SP500','KIOXIA','GOLD','SILVER'],
         heatmap: ['BTC','ETH','SOL','XRP','ZEC'],
         positioning: ['BTC','ETH','SOL','XRP','ZEC'],
-        orderBook: ['BTC','ETH','SOL','XRP','ZEC','SP500','GOLD','SILVER'],
+        orderBook: ['BTC','ETH','SOL','XRP','ZEC','SP500','KIOXIA','GOLD','SILVER'],
         hip3: ['xyz:SP500','xyz:GOLD','xyz:SILVER'],
         sp500Map: true,
+        mexcStockFutures: ['KIOXIA'],
         note: 'Heatmap availability depends on the upstream public source for each symbol.'
       }, { headers });
     }
@@ -209,6 +258,65 @@ export default {
       } catch(error) {
         return Response.json({error:'sp500_map_upstream_failed',message:String(error?.message||error)},{status:502,headers});
       }
+    }
+
+    const mexcMarketMatch = url.pathname.match(/^\/mexc\/market\/([A-Za-z0-9_-]+)$/);
+    if (mexcMarketMatch) {
+      const symbol=mexcMarketMatch[1].toUpperCase();
+      if(!MEXC_MARKETS[symbol]) return Response.json({error:'unsupported_symbol'},{status:400,headers});
+      try{
+        const {apiSymbol,row,cfg}=await fetchMexcTicker(symbol);
+        const lastPrice=Number(row.lastPrice), fairPrice=Number(row.fairPrice), indexPrice=Number(row.indexPrice), fundingRate=Number(row.fundingRate), holdVol=Number(row.holdVol);
+        const mark=Number.isFinite(fairPrice)?fairPrice:lastPrice;
+        const openInterestUsd=Number.isFinite(holdVol)&&Number.isFinite(mark)?holdVol*cfg.contractSize*mark:null;
+        const basis=Number.isFinite(lastPrice)&&Number.isFinite(indexPrice)&&indexPrice!==0?lastPrice/indexPrice-1:null;
+        return Response.json({source:'MEXC Futures',symbol,apiSymbol,contractSize:cfg.contractSize,lastPrice:Number.isFinite(lastPrice)?lastPrice:null,fairPrice:Number.isFinite(fairPrice)?fairPrice:null,indexPrice:Number.isFinite(indexPrice)?indexPrice:null,fundingRate:Number.isFinite(fundingRate)?fundingRate:null,holdVol:Number.isFinite(holdVol)?holdVol:null,openInterestUsd,basis,volume24:Number(row.volume24),amount24:Number(row.amount24),lower24Price:Number(row.lower24Price),high24Price:Number(row.high24Price),riseFallRate:Number(row.riseFallRate),timestamp:Number(row.timestamp)||Date.now()},{headers:{...headers,'Cache-Control':'public, max-age=2'}});
+      }catch(error){return Response.json({error:'mexc_market_failed',message:String(error?.message||error)},{status:502,headers});}
+    }
+
+    const mexcBookMatch = url.pathname.match(/^\/mexc\/book\/([A-Za-z0-9_-]+)$/);
+    if (mexcBookMatch) {
+      const symbol=mexcBookMatch[1].toUpperCase();
+      if(!MEXC_MARKETS[symbol]) return Response.json({error:'unsupported_symbol'},{status:400,headers});
+      try{
+        const {apiSymbol,data,cfg}=await fetchMexcFor(symbol,s=>`/api/v1/contract/depth/${encodeURIComponent(s)}`,{cacheTtl:2,cacheEverything:true});
+        const raw=(data&&typeof data==='object')?data:{};
+        const bids=normalizeMexcDepthRows(raw.bids,cfg.contractSize), asks=normalizeMexcDepthRows(raw.asks,cfg.contractSize);
+        if(!bids.length&&!asks.length) throw new Error('MEXC depth empty');
+        const bestBid=Number(bids[0]?.px),bestAsk=Number(asks[0]?.px),spot=Number.isFinite(bestBid)&&Number.isFinite(bestAsk)?(bestBid+bestAsk)/2:(bestBid||bestAsk);
+        return Response.json({coin:apiSymbol,source:'MEXC Futures',levels:[bids,asks],wideLevels:[bids,asks],time:Number(raw.timestamp)||Date.now(),wideMeta:{spot,rangeUsd:80,contractSize:cfg.contractSize}},{headers:{...headers,'Cache-Control':'public, max-age=2'}});
+      }catch(error){return Response.json({error:'mexc_book_failed',message:String(error?.message||error)},{status:502,headers});}
+    }
+
+    const mexcDealsMatch = url.pathname.match(/^\/mexc\/deals\/([A-Za-z0-9_-]+)$/);
+    if (mexcDealsMatch) {
+      const symbol=mexcDealsMatch[1].toUpperCase();
+      if(!MEXC_MARKETS[symbol]) return Response.json({error:'unsupported_symbol'},{status:400,headers});
+      try{
+        const {apiSymbol,data,cfg}=await fetchMexcFor(symbol,s=>`/api/v1/contract/deals/${encodeURIComponent(s)}?limit=100`,{cacheTtl:1,cacheEverything:true});
+        const rows=Array.isArray(data)?data:[];
+        const trades=rows.map((x,i)=>{
+          const px=Number(x?.p),contracts=Number(x?.v),type=Number(x?.T),time=Number(x?.t),sz=contracts*cfg.contractSize;
+          if(!Number.isFinite(px)||!Number.isFinite(sz)||sz<=0||!Number.isFinite(time)) return null;
+          return {px,sz,side:type===1?'B':'A',time,key:`${time}:${px}:${contracts}:${type}:${Number(x?.O)||0}:${Number(x?.M)||0}`};
+        }).filter(Boolean).sort((a,b)=>a.time-b.time);
+        return Response.json({source:'MEXC Futures',symbol,apiSymbol,contractSize:cfg.contractSize,timestamp:Date.now(),trades},{headers:{...headers,'Cache-Control':'public, max-age=1'}});
+      }catch(error){return Response.json({error:'mexc_deals_failed',message:String(error?.message||error)},{status:502,headers});}
+    }
+
+    const mexcKlineMatch = url.pathname.match(/^\/mexc\/kline\/([A-Za-z0-9_-]+)$/);
+    if (mexcKlineMatch) {
+      const symbol=mexcKlineMatch[1].toUpperCase();
+      if(!MEXC_MARKETS[symbol]) return Response.json({error:'unsupported_symbol'},{status:400,headers});
+      const interval=url.searchParams.get('interval')||'Min1', hours=Math.max(1,Math.min(24,Number(url.searchParams.get('hours'))||6));
+      const allowed=new Set(['Min1','Min5','Min15','Min30','Min60']); if(!allowed.has(interval)) return Response.json({error:'unsupported_interval'},{status:400,headers});
+      const end=Math.floor(Date.now()/1000),start=end-hours*3600;
+      try{
+        const {apiSymbol,data}=await fetchMexcFor(symbol,s=>`/api/v1/contract/kline/${encodeURIComponent(s)}?interval=${encodeURIComponent(interval)}&start=${start}&end=${end}`,{cacheTtl:20,cacheEverything:true});
+        const d=(data&&typeof data==='object')?data:{}, times=Array.isArray(d.time)?d.time:[];
+        const candles=times.map((t,i)=>({ts:Number(t)*1000,o:Number(d.open?.[i]),h:Number(d.high?.[i]),l:Number(d.low?.[i]),c:Number(d.close?.[i]),v:Number(d.vol?.[i])})).filter(x=>[x.ts,x.o,x.h,x.l,x.c].every(Number.isFinite));
+        return Response.json({source:'MEXC Futures',symbol,apiSymbol,interval,timestamp:Date.now(),candles},{headers:{...headers,'Cache-Control':'public, max-age=20'}});
+      }catch(error){return Response.json({error:'mexc_kline_failed',message:String(error?.message||error)},{status:502,headers});}
     }
 
     const marketMatch = url.pathname.match(/^\/market\/([A-Za-z0-9_-]+)$/);

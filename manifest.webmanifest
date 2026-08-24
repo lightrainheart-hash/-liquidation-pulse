@@ -1,7 +1,7 @@
 {
   "name": "LiqPulse - Realtime Liquidation Monitor",
   "short_name": "LiqPulse",
-  "description": "Mobile-first derivatives monitor with unified market bias, data-quality scoring, liquidation/L2 reaction zones, funding, OI, taker flow and BTC whale-order visualization.",
+  "description": "Mobile-first derivatives monitor with unified market bias, data-quality scoring, liquidation/L2 reaction zones, funding, OI, taker flow and multi-market whale-order visualization plus MEXC KIOXIA stock-futures analytics.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
