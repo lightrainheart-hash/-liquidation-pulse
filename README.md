@@ -1,8 +1,8 @@
-# LiqPulse v1.3.0
+# LiqPulse v1.3.1
 
 ## BTC Whale Order History Map
 
-- BTC price range is fixed at current price ±$5,000.
+- BTC Whale Order Map display range is current price ±$3,000, while L2 measurement/history capture extends to ±$10,000.
 - Worker combines Hyperliquid L2 books at multiple aggregation granularities (5/3/2 significant figures) so real resting liquidity farther from spot can be visualized without inventing levels.
 - Whale walls are tracked over time in localStorage for up to 6 hours.
 - Chart supports 1H / 3H / 6H history.
@@ -18,3 +18,5 @@ This is a Hyperliquid-derived order-map, not CoinGlass exchange-wide proprietary
 ## Deployment
 
 Upload all files to the GitHub repository and commit to `main`. Cloudflare Workers Builds should deploy automatically.
+
+- v1.3.1: mobile chart display tightened to ±$3,000 while BTC whale-wall collection/storage remains wide at ±$10,000.

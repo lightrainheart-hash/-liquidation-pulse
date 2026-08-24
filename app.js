@@ -315,6 +315,8 @@ function estimatedTriggerZones(){
 function whaleSnapshotKey(){ return 'liqpulse_btc_whale_walls_v2'; }
 function whaleTrackKey(){ return 'liqpulse_btc_whale_tracks_v2'; }
 const WHALE_RETENTION_MS=6*60*60*1000;
+const WHALE_CAPTURE_RANGE_USD=10000;
+const WHALE_DISPLAY_RANGE_USD=3000;
 function loadWhaleHistory(){
   try{ const raw=JSON.parse(localStorage.getItem(whaleSnapshotKey())||'[]'); const cutoff=Date.now()-WHALE_RETENTION_MS; return Array.isArray(raw)?raw.filter(x=>Number(x.ts)>=cutoff):[]; }catch{return []}
 }
@@ -334,7 +336,7 @@ function whaleRows(ob,spot){
   const asks=(ob?.wideAsks?.length?ob.wideAsks:ob?.asks)||[];
   const bids=(ob?.wideBids?.length?ob.wideBids:ob?.bids)||[];
   return [...asks.map(x=>({...x,side:'sell'})),...bids.map(x=>({...x,side:'buy'}))]
-    .filter(x=>Number.isFinite(x.price)&&Number.isFinite(x.notional)&&Math.abs(x.price-spot)<=5000);
+    .filter(x=>Number.isFinite(x.price)&&Number.isFinite(x.notional)&&Math.abs(x.price-spot)<=WHALE_CAPTURE_RANGE_USD);
 }
 function selectWhaleWalls(rows){
   if(!rows.length) return [];
@@ -359,7 +361,7 @@ function mergeWhaleBands(walls,spot){
     const prev=map.get(key)||{side:w.side,price,notional:0,count:0,maxNotional:0};
     prev.notional+=w.notional; prev.count+=1; prev.maxNotional=Math.max(prev.maxNotional,w.notional); map.set(key,prev);
   }
-  return [...map.values()].filter(x=>Math.abs(x.price-spot)<=5000).sort((a,b)=>b.notional-a.notional);
+  return [...map.values()].filter(x=>Math.abs(x.price-spot)<=WHALE_CAPTURE_RANGE_USD).sort((a,b)=>b.notional-a.notional);
 }
 
 function updateWhaleTracks(walls,spot,now){
@@ -440,13 +442,13 @@ function renderWhaleCanvas(metrics){
   ctx.fillStyle='#070d15';ctx.fillRect(0,0,w,h); const pad={l:8,r:58,t:18,b:30}; const iw=w-pad.l-pad.r, ih=h-pad.t-pad.b;
   const spot=metrics?.spot||state.latestPrice; if(!Number.isFinite(spot)) return;
   const end=Date.now(), lookback=state.whaleLookbackMs||3*60*60*1000, start=end-lookback;
-  const minP=spot-5000, maxP=spot+5000;
+  const minP=spot-WHALE_DISPLAY_RANGE_USD, maxP=spot+WHALE_DISPLAY_RANGE_USD;
   const py=p=>pad.t+(maxP-p)/(maxP-minP)*ih, tx=ts=>pad.l+clamp((ts-start)/lookback,0,1)*iw;
   // horizontal price grid
   ctx.font='9px -apple-system, sans-serif'; for(let i=0;i<=4;i++){const y=pad.t+ih*i/4;ctx.strokeStyle='#172131';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(pad.l+iw,y);ctx.stroke();const p=maxP-(maxP-minP)*i/4;ctx.fillStyle='#64758b';ctx.fillText('$'+Math.round(p).toLocaleString(),pad.l+iw+5,y+3);}
   // time grid + labels
   const timeSteps=4; for(let i=0;i<=timeSteps;i++){const x=pad.l+iw*i/timeSteps;ctx.strokeStyle='rgba(28,42,61,.65)';ctx.beginPath();ctx.moveTo(x,pad.t);ctx.lineTo(x,pad.t+ih);ctx.stroke();const ts=start+lookback*i/timeSteps,d=new Date(ts);const label=d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});ctx.fillStyle='#596b82';ctx.font='8px -apple-system, sans-serif';ctx.fillText(label,Math.max(pad.l,x-15),h-8);}
-  ctx.fillStyle='#6f8199';ctx.font='8px -apple-system, sans-serif';ctx.fillText(`±$5,000 / ${Math.round(lookback/3600000)}H履歴`,pad.l+4,pad.t+10);
+  ctx.fillStyle='#6f8199';ctx.font='8px -apple-system, sans-serif';ctx.fillText(`表示 ±$3,000 / 収集 ±$10,000 / ${Math.round(lookback/3600000)}H履歴`,pad.l+4,pad.t+10);
   // persistent whale wall tracks: horizontal price bands with duration encoded by x-length.
   const tracks=(state.whaleTracks.length?state.whaleTracks:loadWhaleTracks()).filter(t=>(t.lastSeen||0)>=start&&t.price>=minP&&t.price<=maxP);
   const maxN=Math.max(1,...tracks.map(t=>t.maxNotional||t.lastNotional||0),...(metrics?.walls||[]).map(x=>x.notional||0));
@@ -470,7 +472,7 @@ function renderWhaleCanvas(metrics){
     }
   }
   // Current snapshot bands: guarantees distant large round-number liquidity is visible immediately.
-  const currentBands=mergeWhaleBands(metrics?.walls||[],spot).slice(0,18);
+  const currentBands=mergeWhaleBands(metrics?.walls||[],spot).filter(b=>Math.abs(b.price-spot)<=WHALE_DISPLAY_RANGE_USD).slice(0,18);
   for(const b of currentBands){
     const y=py(b.price), tier=whaleTier(b.notional), base=b.side==='sell'?[255,72,100]:[37,211,154];
     const x1=pad.l+iw*.73, x2=pad.l+iw;
