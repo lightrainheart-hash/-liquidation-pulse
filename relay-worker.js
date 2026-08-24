@@ -1,4 +1,4 @@
-// LiqPulse v2.0.0 — Cloudflare Worker relay
+// LiqPulse v2.1.0 — Cloudflare Worker relay
 // Public market data only. No API keys, cookies, or user data are forwarded.
 
 const ALLOWED_HEATMAP_SYMBOLS = new Set(['BTC', 'ETH', 'SOL', 'XRP', 'ZEC']);
@@ -139,12 +139,12 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === '/health') {
-      return Response.json({ ok: true, service: 'liqpulse-relay', version: '2.0.0' }, { headers });
+      return Response.json({ ok: true, service: 'liqpulse-relay', version: '2.1.0' }, { headers });
     }
 
     if (url.pathname === '/capabilities') {
       return Response.json({
-        version: '2.0.0',
+        version: '2.1.0',
         market: ['BTC','ETH','SOL','XRP','ZEC','SP500','GOLD','SILVER'],
         heatmap: ['BTC','ETH','SOL','XRP','ZEC'],
         positioning: ['BTC','ETH','SOL','XRP','ZEC'],
@@ -243,9 +243,10 @@ export default {
         const bestBid=Number(precise?.levels?.[0]?.[0]?.px), bestAsk=Number(precise?.levels?.[1]?.[0]?.px);
         const spot=Number.isFinite(bestBid)&&Number.isFinite(bestAsk)?(bestBid+bestAsk)/2:(Number(bestBid)||Number(bestAsk));
         if(!Number.isFinite(spot)) return Response.json(precise,{headers:{...headers,'Cache-Control':'public, max-age=5'}});
-        const maxRangeUsd=symbol==='BTC'?10000:Math.max(spot*0.12,spot*0.03);
-        const nearMax=symbol==='BTC'?Math.min(400,maxRangeUsd*.08):spot*.005;
-        const midMax=symbol==='BTC'?Math.min(2500,maxRangeUsd*.35):spot*.03;
+        const configuredRange={BTC:10000,ETH:1200,SOL:150,SP500:1000,GOLD:1200,SILVER:20}[symbol];
+        const maxRangeUsd=configuredRange||Math.max(spot*0.12,spot*0.03);
+        const nearMax=Math.max(maxRangeUsd*.05,Math.min(maxRangeUsd*.12,spot*.004));
+        const midMax=Math.max(nearMax*2,Math.min(maxRangeUsd*.40,spot*.035));
         const pick=(raw,side,minDist,maxDist)=>((raw?.levels?.[side]||[]).filter(x=>{
           const p=Number(x?.px),d=Math.abs(p-spot);return Number.isFinite(p)&&d>=minDist&&d<maxDist;
         }));

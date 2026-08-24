@@ -11,13 +11,13 @@
 <link href="./manifest.webmanifest" rel="manifest"/>
 <link href="./icon-180.png" rel="apple-touch-icon"/>
 <link href="./styles.css" rel="stylesheet"/>
-<title>LiqPulse v2.0.0</title>
+<title>LiqPulse v2.1.0</title>
 </head>
 <body>
 <main class="app-shell">
 <header class="topbar">
 <div>
-<div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v2.0.0</span></div>
+<div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v2.1.0</span></div>
 <h1>LiqPulse</h1>
 </div>
 <div class="status offline" id="connBadge"><span></span><b>接続中</b></div>
@@ -110,12 +110,12 @@
 <section class="card btc-whale-card hidden" id="btcWhaleCard">
 <div class="section-head">
 <div>
-<div class="card-title whale-title">BTC Whale Order Map</div>
-<div class="subtitle">大口売り壁・買い壁の継続時間を価格×時間で可視化 / Hyperliquid L2</div>
+<div class="card-title whale-title" id="whaleTitle">Order Map</div>
+<div class="subtitle" id="whaleSubtitle">大口売り壁・買い壁を価格×時間で可視化 / Hyperliquid L2</div>
 </div>
 <div class="engine-badges"><span class="signal-badge neutral" id="whalePressureBadge">分析中</span><span class="pill" id="whaleBookAge">—</span></div>
 </div>
-<div aria-label="BTC Whale Map controls" class="whale-toolbar whale-toolbar-main">
+<div aria-label="Order Map controls" class="whale-toolbar whale-toolbar-main">
 <div class="whale-control-group">
 <span>履歴</span><button data-whale-hours="1" onclick="setWhaleLookback(1)" type="button">1H</button><button class="active" data-whale-hours="3" onclick="setWhaleLookback(3)" type="button">3H</button><button data-whale-hours="6" onclick="setWhaleLookback(6)" type="button">6H</button>
 </div>
@@ -130,12 +130,12 @@
 <div class="whale-summary-grid">
 <div><span>直上の大口売り壁</span><b id="whaleNearestSell">—</b><small id="whaleNearestSellMeta">—</small></div>
 <div><span>直下の大口買い壁</span><b id="whaleNearestBuy">—</b><small id="whaleNearestBuyMeta">—</small></div>
-<div><span>売り壁総額</span><b class="red" id="whaleSellTotal">—</b><small>収集範囲 ±$10,000</small></div>
-<div><span>買い壁総額</span><b class="green" id="whaleBuyTotal">—</b><small>収集範囲 ±$10,000</small></div>
+<div><span>売り壁総額</span><b class="red" id="whaleSellTotal">—</b><small id="whaleSellTotalMeta">収集範囲 —</small></div>
+<div><span>買い壁総額</span><b class="green" id="whaleBuyTotal">—</b><small id="whaleBuyTotalMeta">収集範囲 —</small></div>
 </div>
 <div class="whale-chart-wrap">
-<canvas aria-label="BTC大口注文マップ" class="whale-canvas" id="whaleCanvas"></canvas>
-<div class="whale-legend"><span class="sell">売り壁</span><span class="buy">買い壁</span><span class="px">BTC価格</span><span class="ghost">消失壁(推定)</span></div>
+<canvas aria-label="大口注文マップ" class="whale-canvas" id="whaleCanvas"></canvas>
+<div class="whale-legend"><span class="sell">売り壁</span><span class="buy">買い壁</span><span class="px" id="whaleLegendPrice">価格</span><span class="ghost">消失壁(推定)</span></div>
 </div>
 <div class="quick-advice" id="whaleInsight">L2板を蓄積して大口注文の継続・消失を分析します。</div>
 <div class="whale-list-head"><span>現在の大口注文</span><small>上位10件 / 継続時間</small></div>
@@ -329,6 +329,6 @@
 </section>
 <footer>分析専用・注文機能なし。表示される方向・候補は複数の公開市場データを統合した補助シグナルです。実清算データとL2推定反応帯は明確に区別し、取得できない項目は推測値で埋めません。</footer>
 </main>
-<script defer="" src="./app.js?v=2.0.0"></script>
+<script defer="" src="./app.js?v=2.1.0"></script>
 </body>
 </html>
