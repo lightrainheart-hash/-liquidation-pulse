@@ -119,3 +119,15 @@
 /* v1.2.0 BTC Whale Order History Map */
 .whale-toolbar{display:flex;align-items:center;gap:6px;margin-top:10px;padding:6px 8px;border:1px solid #1d2d42;border-radius:11px;background:#09111d;color:#7e8fa7;font-size:8px}.whale-toolbar>span{font-weight:800;margin-right:2px}.whale-toolbar button{appearance:none;border:1px solid #26394f;background:#0b1624;color:#8fa0b6;border-radius:8px;padding:5px 9px;font-size:8px;font-weight:800}.whale-toolbar button.active{background:#183356;color:#eef5ff;border-color:#416b9c}.whale-toolbar small{margin-left:auto;color:#708299;font-size:8px}.whale-canvas{height:390px}.whale-order-row{grid-template-columns:72px 1fr 70px 78px}.whale-order-row small{white-space:nowrap}
 @media(max-width:600px){.whale-canvas{height:370px}.whale-order-row{grid-template-columns:65px 1fr 58px 78px;gap:6px}.whale-toolbar small{font-size:7px}}
+
+/* v1.3.2 BTC Whale Map controls */
+.whale-toolbar-main{display:grid;grid-template-columns:auto auto auto 1fr;gap:8px;align-items:center}
+.whale-control-group{display:flex;align-items:center;gap:5px;min-width:0}
+.whale-control-group>span{font-weight:800;color:#7e8fa7;white-space:nowrap}
+.whale-toolbar-main small{justify-self:end;text-align:right}
+@media(max-width:760px){
+  .whale-toolbar-main{grid-template-columns:1fr;gap:7px}
+  .whale-control-group{display:grid;grid-template-columns:50px repeat(3,minmax(0,1fr));width:100%}
+  .whale-control-group button{padding:6px 4px}
+  .whale-toolbar-main small{justify-self:start;text-align:left;padding-left:2px}
+}

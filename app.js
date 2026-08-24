@@ -316,7 +316,19 @@ function whaleSnapshotKey(){ return 'liqpulse_btc_whale_walls_v2'; }
 function whaleTrackKey(){ return 'liqpulse_btc_whale_tracks_v2'; }
 const WHALE_RETENTION_MS=6*60*60*1000;
 const WHALE_CAPTURE_RANGE_USD=10000;
-const WHALE_DISPLAY_RANGE_USD=3000;
+const WHALE_DISPLAY_RANGE_DEFAULT_USD=3000;
+const WHALE_DISPLAY_RANGE_OPTIONS=[1000,3000,5000];
+const WHALE_CHART_ZOOM_OPTIONS=[1,1.35,1.7];
+function loadWhaleDisplayRange(){
+  const v=Number(localStorage.getItem('liqpulse_whale_display_range_usd'));
+  return WHALE_DISPLAY_RANGE_OPTIONS.includes(v)?v:WHALE_DISPLAY_RANGE_DEFAULT_USD;
+}
+function loadWhaleChartZoom(){
+  const v=Number(localStorage.getItem('liqpulse_whale_chart_zoom'));
+  return WHALE_CHART_ZOOM_OPTIONS.includes(v)?v:1;
+}
+function whaleDisplayRangeUsd(){ return state.whaleDisplayRangeUsd||loadWhaleDisplayRange(); }
+function whaleChartZoom(){ return state.whaleChartZoom||loadWhaleChartZoom(); }
 function loadWhaleHistory(){
   try{ const raw=JSON.parse(localStorage.getItem(whaleSnapshotKey())||'[]'); const cutoff=Date.now()-WHALE_RETENTION_MS; return Array.isArray(raw)?raw.filter(x=>Number(x.ts)>=cutoff):[]; }catch{return []}
 }
@@ -437,18 +449,22 @@ function activeTrackForWall(wall,spot){
 }
 function renderWhaleCanvas(metrics){
   const canvas=$('whaleCanvas'); if(!canvas||state.asset.symbol!=='BTC') return;
+  const zoom=whaleChartZoom();
+  const baseH=window.matchMedia('(max-width: 600px)').matches?370:390;
+  canvas.style.height=`${Math.round(baseH*zoom)}px`;
   const rect=canvas.getBoundingClientRect(), dpr=Math.min(2,window.devicePixelRatio||1), w=Math.max(320,Math.floor(rect.width)), h=Math.max(330,Math.floor(rect.height));
   if(canvas.width!==Math.floor(w*dpr)||canvas.height!==Math.floor(h*dpr)){canvas.width=Math.floor(w*dpr);canvas.height=Math.floor(h*dpr);} const ctx=canvas.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,w,h);
   ctx.fillStyle='#070d15';ctx.fillRect(0,0,w,h); const pad={l:8,r:58,t:18,b:30}; const iw=w-pad.l-pad.r, ih=h-pad.t-pad.b;
   const spot=metrics?.spot||state.latestPrice; if(!Number.isFinite(spot)) return;
   const end=Date.now(), lookback=state.whaleLookbackMs||3*60*60*1000, start=end-lookback;
-  const minP=spot-WHALE_DISPLAY_RANGE_USD, maxP=spot+WHALE_DISPLAY_RANGE_USD;
+  const displayRange=whaleDisplayRangeUsd();
+  const minP=spot-displayRange, maxP=spot+displayRange;
   const py=p=>pad.t+(maxP-p)/(maxP-minP)*ih, tx=ts=>pad.l+clamp((ts-start)/lookback,0,1)*iw;
   // horizontal price grid
   ctx.font='9px -apple-system, sans-serif'; for(let i=0;i<=4;i++){const y=pad.t+ih*i/4;ctx.strokeStyle='#172131';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(pad.l+iw,y);ctx.stroke();const p=maxP-(maxP-minP)*i/4;ctx.fillStyle='#64758b';ctx.fillText('$'+Math.round(p).toLocaleString(),pad.l+iw+5,y+3);}
   // time grid + labels
   const timeSteps=4; for(let i=0;i<=timeSteps;i++){const x=pad.l+iw*i/timeSteps;ctx.strokeStyle='rgba(28,42,61,.65)';ctx.beginPath();ctx.moveTo(x,pad.t);ctx.lineTo(x,pad.t+ih);ctx.stroke();const ts=start+lookback*i/timeSteps,d=new Date(ts);const label=d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});ctx.fillStyle='#596b82';ctx.font='8px -apple-system, sans-serif';ctx.fillText(label,Math.max(pad.l,x-15),h-8);}
-  ctx.fillStyle='#6f8199';ctx.font='8px -apple-system, sans-serif';ctx.fillText(`表示 ±$3,000 / 収集 ±$10,000 / ${Math.round(lookback/3600000)}H履歴`,pad.l+4,pad.t+10);
+  ctx.fillStyle='#6f8199';ctx.font='8px -apple-system, sans-serif';ctx.fillText(`表示 ±$${displayRange.toLocaleString()} / 収集 ±$${WHALE_CAPTURE_RANGE_USD.toLocaleString()} / ${Math.round(lookback/3600000)}H履歴`,pad.l+4,pad.t+10);
   // persistent whale wall tracks: horizontal price bands with duration encoded by x-length.
   const tracks=(state.whaleTracks.length?state.whaleTracks:loadWhaleTracks()).filter(t=>(t.lastSeen||0)>=start&&t.price>=minP&&t.price<=maxP);
   const maxN=Math.max(1,...tracks.map(t=>t.maxNotional||t.lastNotional||0),...(metrics?.walls||[]).map(x=>x.notional||0));
@@ -466,19 +482,22 @@ function renderWhaleCanvas(metrics){
       ctx.strokeStyle=`rgba(${base[0]},${base[1]},${base[2]},${Math.min(.18,.05+.12*strength)})`;
       ctx.lineWidth=Math.max(12,tier.width*2.2);ctx.beginPath();ctx.moveTo(x1,y);ctx.lineTo(x2,y);ctx.stroke();
     }
-    if(active&&x2-x1>34&&n>=5000000){
+    if(active&&x2-x1>34&&n>=5000000&&canPlaceWhaleLabel(y,12)){
       ctx.fillStyle=t.side==='sell'?'rgba(255,126,145,.92)':'rgba(96,230,187,.92)';ctx.font='7px -apple-system, sans-serif';
       const txt=`${tier.label?`${tier.label} `:''}${money(n)}`;ctx.fillText(txt,Math.min(x2-48,w-112),y-5);
     }
   }
+  // De-clutter labels on small screens: keep a minimum vertical gap while preserving the strongest walls.
+  const placedLabelYs=[];
+  const canPlaceWhaleLabel=(y,gap=13)=>{ if(placedLabelYs.some(v=>Math.abs(v-y)<gap)) return false; placedLabelYs.push(y); return true; };
   // Current snapshot bands: guarantees distant large round-number liquidity is visible immediately.
-  const currentBands=mergeWhaleBands(metrics?.walls||[],spot).filter(b=>Math.abs(b.price-spot)<=WHALE_DISPLAY_RANGE_USD).slice(0,18);
+  const currentBands=mergeWhaleBands(metrics?.walls||[],spot).filter(b=>Math.abs(b.price-spot)<=displayRange).slice(0,18);
   for(const b of currentBands){
     const y=py(b.price), tier=whaleTier(b.notional), base=b.side==='sell'?[255,72,100]:[37,211,154];
     const x1=pad.l+iw*.73, x2=pad.l+iw;
     ctx.strokeStyle=`rgba(${base[0]},${base[1]},${base[2]},${tier.alpha})`;ctx.lineWidth=tier.width;
     ctx.beginPath();ctx.moveTo(x1,y);ctx.lineTo(x2,y);ctx.stroke();
-    if(b.notional>=10000000){ctx.fillStyle=`rgba(${base[0]},${base[1]},${base[2]},.95)`;ctx.font='7px -apple-system, sans-serif';ctx.fillText(`${money(b.notional)} @ ${Math.round(b.price).toLocaleString()}`,Math.max(pad.l,x1-92),y-5);}
+    if(b.notional>=10000000&&canPlaceWhaleLabel(y,14)){ctx.fillStyle=`rgba(${base[0]},${base[1]},${base[2]},.95)`;ctx.font='7px -apple-system, sans-serif';ctx.fillText(`${money(b.notional)} @ ${Math.round(b.price).toLocaleString()}`,Math.max(pad.l,x1-92),y-5);}
   }
   // 5m BTC candles, intentionally subtle so whale walls remain the primary visual layer.
   const candles=whaleCandles(start,end), candleW=Math.max(2,Math.min(7,iw/Math.max(20,candles.length)*.62));
@@ -488,6 +507,11 @@ function renderWhaleCanvas(metrics){
 }
 function renderWhaleOrderMap(){
   const card=$('btcWhaleCard'); if(!card) return; if(state.asset.symbol!=='BTC'){card.classList.add('hidden');return;} card.classList.remove('hidden');
+  const displayRange=whaleDisplayRangeUsd();
+  const zoom=whaleChartZoom();
+  setText('whaleRangeStatus',`表示 ±$${displayRange.toLocaleString()} / 収集 ±$${WHALE_CAPTURE_RANGE_USD.toLocaleString()} / ${zoom===1?'標準':zoom===1.35?'拡大':'最大'}`);
+  document.querySelectorAll('[data-whale-range]').forEach(b=>b.classList.toggle('active',Number(b.dataset.whaleRange)===displayRange));
+  document.querySelectorAll('[data-whale-zoom]').forEach(b=>b.classList.toggle('active',Number(b.dataset.whaleZoom)===zoom));
   const m=whaleMetrics(); if(!m){setText('whalePressureBadge','取得中');setText('whaleBookAge','—');return;}
   const fmt=(x)=>x?priceFmt(x.price):'—'; setText('whaleNearestSell',fmt(m.nearestSell)); setText('whaleNearestBuy',fmt(m.nearestBuy)); setText('whaleNearestSellMeta',m.nearestSell?`+${((m.nearestSell.price/m.spot-1)*100).toFixed(2)}% / ${money(m.nearestSell.notional)}`:'—'); setText('whaleNearestBuyMeta',m.nearestBuy?`${((m.nearestBuy.price/m.spot-1)*100).toFixed(2)}% / ${money(m.nearestBuy.notional)}`:'—'); setText('whaleSellTotal',money(m.sellTotal)); setText('whaleBuyTotal',money(m.buyTotal));
   const total=m.sellTotal+m.buyTotal, sellPct=total?m.sellTotal/total:.5; const badge=$('whalePressureBadge'); let label='均衡',tone='neutral'; if(sellPct>=.62){label='売り壁優勢';tone='down';}else if(sellPct<=.38){label='買い壁優勢';tone='up';} if(badge){badge.textContent=label;badge.className=`signal-badge ${tone}`;} setText('whaleBookAge','LIVE + 履歴');
@@ -502,6 +526,20 @@ function renderWhaleOrderMap(){
 function setWhaleLookback(hours){
   const h=[1,3,6].includes(Number(hours))?Number(hours):3; state.whaleLookbackMs=h*60*60*1000;
   document.querySelectorAll('[data-whale-hours]').forEach(b=>b.classList.toggle('active',Number(b.dataset.whaleHours)===h));
+  renderWhaleOrderMap();
+}
+function setWhaleDisplayRange(range){
+  const r=WHALE_DISPLAY_RANGE_OPTIONS.includes(Number(range))?Number(range):WHALE_DISPLAY_RANGE_DEFAULT_USD;
+  state.whaleDisplayRangeUsd=r;
+  try{localStorage.setItem('liqpulse_whale_display_range_usd',String(r));}catch{}
+  document.querySelectorAll('[data-whale-range]').forEach(b=>b.classList.toggle('active',Number(b.dataset.whaleRange)===r));
+  renderWhaleOrderMap();
+}
+function setWhaleChartZoom(value){
+  const z=WHALE_CHART_ZOOM_OPTIONS.includes(Number(value))?Number(value):1;
+  state.whaleChartZoom=z;
+  try{localStorage.setItem('liqpulse_whale_chart_zoom',String(z));}catch{}
+  document.querySelectorAll('[data-whale-zoom]').forEach(b=>b.classList.toggle('active',Number(b.dataset.whaleZoom)===z));
   renderWhaleOrderMap();
 }
 

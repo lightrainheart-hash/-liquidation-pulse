@@ -139,12 +139,12 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === '/health') {
-      return Response.json({ ok: true, service: 'liqpulse-relay', version: '1.3.1' }, { headers });
+      return Response.json({ ok: true, service: 'liqpulse-relay', version: '1.3.2' }, { headers });
     }
 
     if (url.pathname === '/capabilities') {
       return Response.json({
-        version: '1.3.1',
+        version: '1.3.2',
         market: ['BTC','ETH','SOL','XRP','ZEC','SP500','GOLD','SILVER'],
         heatmap: ['BTC','ETH','SOL','XRP','ZEC'],
         positioning: ['BTC','ETH','SOL','XRP','ZEC'],

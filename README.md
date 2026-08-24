@@ -1,4 +1,4 @@
-# LiqPulse v1.3.1
+# LiqPulse v1.3.2
 
 ## BTC Whale Order History Map
 
@@ -20,3 +20,5 @@ This is a Hyperliquid-derived order-map, not CoinGlass exchange-wide proprietary
 Upload all files to the GitHub repository and commit to `main`. Cloudflare Workers Builds should deploy automatically.
 
 - v1.3.1: mobile chart display tightened to ±$3,000 while BTC whale-wall collection/storage remains wide at ±$10,000.
+
+- v1.3.2: BTC Whale Map adds ±$1k / ±$3k / ±$5k display-range switches while retaining ±$10k collection. Adds Standard / Large / Max chart-height zoom and automatic label de-cluttering for mobile readability.
