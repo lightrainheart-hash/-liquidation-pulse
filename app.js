@@ -27,18 +27,18 @@ const CONFIG = {
 
 const ASSETS = [
   { symbol:'BTC', name:'Bitcoin', type:'crypto', heatmap:true, positioning:true, dex:'', apiCoin:'BTC', estimatedZones:true,
-    orderMap:{title:'BTC Whale Order Map',subtitle:'大口売り壁・買い壁の継続時間を価格×時間で可視化 / Hyperliquid L2',capture:10000,ranges:[1000,3000,5000],defaultRange:3000,bucket:100,minNotional:100000} },
+    orderMap:{title:'BTC Whale Order Map',subtitle:'局面を動かし得る重要大口壁だけを価格×時間で可視化 / Hyperliquid L2',capture:10000,ranges:[1000,3000,5000],defaultRange:3000,bucket:100,minNotional:100000,strongWall:10000000,impactShare:.18,impactQuantile:.80,impactMaxPerSide:3} },
   { symbol:'ETH', name:'Ethereum', type:'crypto', heatmap:true, positioning:true, dex:'', apiCoin:'ETH', estimatedZones:true,
-    orderMap:{title:'ETH Whale Order Map',subtitle:'Ethereumの大口売り壁・買い壁を価格×時間で可視化 / Hyperliquid L2',capture:1200,ranges:[100,250,500],defaultRange:250,bucket:10,minNotional:75000} },
+    orderMap:{title:'ETH Whale Order Map',subtitle:'Ethereumの局面級大口壁だけを価格×時間で可視化 / Hyperliquid L2',capture:1200,ranges:[100,250,500],defaultRange:250,bucket:10,minNotional:75000,strongWall:2000000,impactShare:.18,impactQuantile:.80,impactMaxPerSide:3} },
   { symbol:'SOL', name:'Solana', type:'crypto', heatmap:true, positioning:true, dex:'', apiCoin:'SOL', estimatedZones:true,
-    orderMap:{title:'SOL Whale Order Map',subtitle:'Solanaの大口売り壁・買い壁を価格×時間で可視化 / Hyperliquid L2',capture:150,ranges:[5,15,30],defaultRange:15,bucket:1,minNotional:50000} },
+    orderMap:{title:'SOL Whale Order Map',subtitle:'Solanaの局面級大口壁だけを価格×時間で可視化 / Hyperliquid L2',capture:150,ranges:[5,15,30],defaultRange:15,bucket:1,minNotional:50000,strongWall:750000,impactShare:.18,impactQuantile:.80,impactMaxPerSide:3} },
   { symbol:'XRP', name:'XRP', type:'crypto', heatmap:true, positioning:true, dex:'', apiCoin:'XRP', estimatedZones:true },
   { symbol:'ZEC', name:'Zcash', type:'crypto', heatmap:true, positioning:true, dex:'', apiCoin:'ZEC', estimatedZones:true },
   { symbol:'SP500', name:'S&P 500', type:'index', heatmap:false, positioning:false, dex:'xyz', apiCoin:'xyz:SP500', estimatedZones:true,
-    orderMap:{title:'S&P 500 Liquidity Order Map',subtitle:'Hyperliquid xyz:SP500永久先物の大口流動性を可視化（現物指数全体の板ではありません）',capture:1000,ranges:[100,250,500],defaultRange:250,bucket:10,minNotional:100000} },
+    orderMap:{title:'S&P 500 Liquidity Order Map',subtitle:'xyz:SP500永久先物の局面級大口流動性だけを可視化（現物指数全体の板ではありません）',capture:1000,ranges:[100,250,500],defaultRange:250,bucket:10,minNotional:100000,strongWall:2000000,impactShare:.18,impactQuantile:.80,impactMaxPerSide:3} },
   { symbol:'KIOXIA', name:'Kioxia', type:'stockFuture', source:'mexc', provider:'MEXC Stock Futures', heatmap:false, positioning:false, estimatedZones:true,
     apiSymbol:'KIOXIASTOCK_USDT', contractSize:0.001,
-    orderMap:{title:'KIOXIA Whale Order Map',subtitle:'MEXC KIOXIAUSDT大口売り壁・買い壁を価格×時間で可視化 / MEXC Futures L2',capture:80,ranges:[5,15,30],defaultRange:15,bucket:0.5,minNotional:5000,strongWall:25000,tierNotionals:[250000,100000,50000,25000,10000]} },
+    orderMap:{title:'KIOXIA Whale Order Map',subtitle:'MEXC KIOXIAUSDTの局面級大口壁だけを価格×時間で可視化 / MEXC Futures L2',capture:80,ranges:[5,15,30],defaultRange:15,bucket:0.5,minNotional:5000,strongWall:250000,impactShare:.22,impactQuantile:.80,impactMaxPerSide:3,tierNotionals:[2000000,1000000,500000,250000,100000]} },
   { symbol:'GOLD', name:'Gold', type:'commodity', heatmap:false, positioning:false, dex:'xyz', apiCoin:'xyz:GOLD', estimatedZones:true },
   { symbol:'SILVER', name:'Silver', type:'commodity', heatmap:false, positioning:false, dex:'xyz', apiCoin:'xyz:SILVER', estimatedZones:true },
 ];
@@ -68,7 +68,7 @@ const state = {
   lastExternalTradeAt:0,
   externalCandles:[],
   flowWindowMs:300000,
-  clusterDepth:8,
+  clusterDepth:5,
   ctxByCoin:new Map(),
   latestPrice:null,
   heatmap:null,
@@ -576,6 +576,54 @@ function whaleTier(notional){
   return {label:'',width:2.4,alpha:.66};
 }
 function whaleStrongWallNotional(){ return Number(whaleConfig()?.strongWall)||10000000; }
+function whaleQuantile(values,q=.8){
+  const a=(values||[]).map(Number).filter(Number.isFinite).sort((x,y)=>x-y); if(!a.length) return 0;
+  const pos=(a.length-1)*clamp(Number(q)||0,0,1),lo=Math.floor(pos),hi=Math.ceil(pos); if(lo===hi) return a[lo];
+  return a[lo]+(a[hi]-a[lo])*(pos-lo);
+}
+function whaleImpactThreshold(items){
+  const cfg=whaleConfig()||{}, vals=(items||[]).map(x=>Number(x.notional??x.maxNotional??x.lastNotional)).filter(Number.isFinite); if(!vals.length) return Infinity;
+  const max=Math.max(...vals), q=whaleQuantile(vals,Number(cfg.impactQuantile)||.80), share=Number(cfg.impactShare)||.18;
+  return Math.max(whaleStrongWallNotional(),q,max*share);
+}
+function whaleImpactZoneGap(range=whaleDisplayRangeUsd()){
+  const cfg=whaleConfig()||{}, bucket=Math.max(Number(cfg.bucket)||1,Number.EPSILON);
+  return Math.max(bucket*2.5,Math.max(1,Number(range)||1)*.055);
+}
+function mergeWhaleImpactZones(walls,spot,range=whaleCaptureRangeUsd()){
+  const base=mergeWhaleBands(walls,spot).filter(x=>Math.abs(x.price-spot)<=range), gap=whaleImpactZoneGap(range), out=[];
+  for(const side of ['sell','buy']){
+    const arr=base.filter(x=>x.side===side).sort((a,b)=>a.price-b.price); let cur=null;
+    for(const x of arr){
+      if(cur && x.price-cur.lastPrice<=gap){
+        const total=cur.notional+x.notional; cur.price=(cur.price*cur.notional+x.price*x.notional)/total; cur.notional=total; cur.maxNotional=Math.max(cur.maxNotional||0,x.maxNotional||0); cur.count=(cur.count||0)+(x.count||1); cur.lastPrice=x.price;
+      }else{ if(cur) out.push(cur); cur={...x,lastPrice:x.price}; }
+    }
+    if(cur) out.push(cur);
+  }
+  return out.map(({lastPrice,...x})=>x);
+}
+function significantWhaleZones(walls,spot,range=whaleCaptureRangeUsd()){
+  const zones=mergeWhaleImpactZones(walls,spot,range), maxPer=Math.max(1,Number(whaleConfig()?.impactMaxPerSide)||3), out=[];
+  for(const side of ['sell','buy']){
+    const arr=zones.filter(x=>x.side===side), threshold=whaleImpactThreshold(arr);
+    out.push(...arr.filter(x=>x.notional>=threshold).sort((a,b)=>b.notional-a.notional).slice(0,maxPer));
+  }
+  return out.sort((a,b)=>b.notional-a.notional);
+}
+function significantWhaleTracks(tracks,spot,minP,maxP,displayRange,start,end){
+  const cfg=whaleConfig()||{}, gap=whaleImpactZoneGap(displayRange), maxPer=Math.max(1,Number(cfg.impactMaxPerSide)||3), out=[];
+  for(const side of ['sell','buy']){
+    const arr=(tracks||[]).filter(t=>t.side===side&&(t.lastSeen||0)>=start&&t.price>=minP&&t.price<=maxP)
+      .map(t=>({...t,notional:Number(t.maxNotional||t.lastNotional)||0,duration:Math.max(0,Math.min(end,t.endedAt||end)-Math.max(start,t.firstSeen||start))}));
+    const threshold=whaleImpactThreshold(arr); const selected=[];
+    const ranked=arr.filter(t=>t.notional>=threshold&&(t.duration>=20000||t.notional>=threshold*1.6))
+      .sort((a,b)=>(b.notional*(1+Math.min(2,b.duration/600000)*.12))-(a.notional*(1+Math.min(2,a.duration/600000)*.12)));
+    for(const t of ranked){ if(selected.some(x=>Math.abs(x.price-t.price)<gap)) continue; selected.push(t); if(selected.length>=maxPer) break; }
+    out.push(...selected);
+  }
+  return out.sort((a,b)=>b.notional-a.notional);
+}
 function mergeWhaleBands(walls,spot){
   const cfg=whaleConfig(); if(!cfg) return [];
   const bucket=Math.max(Number(cfg.bucket)||1,Number.EPSILON), map=new Map();
@@ -622,11 +670,11 @@ function recordWhaleSnapshot(ob){
 function whaleMetrics(){
   if(!state.asset.orderMap) return null;
   const ob=state.orderbook, spot=state.latestPrice||state.ctxByCoin.get(state.asset.symbol)?.markPx; if(!ob||!Number.isFinite(spot)) return null;
-  const rows=whaleRows(ob,spot), walls=selectWhaleWalls(rows);
-  const sells=walls.filter(x=>x.side==='sell'&&x.price>=spot), buys=walls.filter(x=>x.side==='buy'&&x.price<=spot);
+  const rows=whaleRows(ob,spot), walls=selectWhaleWalls(rows), impactZones=significantWhaleZones(walls,spot,whaleCaptureRangeUsd());
+  const sells=impactZones.filter(x=>x.side==='sell'&&x.price>=spot), buys=impactZones.filter(x=>x.side==='buy'&&x.price<=spot);
   const sellTotal=sells.reduce((a,x)=>a+x.notional,0), buyTotal=buys.reduce((a,x)=>a+x.notional,0);
   const nearestSell=[...sells].sort((a,b)=>a.price-b.price)[0]||null, nearestBuy=[...buys].sort((a,b)=>b.price-a.price)[0]||null;
-  return {spot,walls,sells,buys,sellTotal,buyTotal,nearestSell,nearestBuy};
+  return {spot,walls,impactZones,sells,buys,sellTotal,buyTotal,nearestSell,nearestBuy};
 }
 function whalePricePoints(start,end){
   const symbol=state.asset.symbol;
@@ -647,7 +695,7 @@ function formatDuration(ms){
   if(!Number.isFinite(ms)||ms<0) return '—'; if(ms<60000) return `${Math.max(1,Math.round(ms/1000))}s`; if(ms<3600000) return `${Math.round(ms/60000)}m`; return `${(ms/3600000).toFixed(ms<10800000?1:0)}h`;
 }
 function activeTrackForWall(wall,spot){
-  const tol=whaleTrackTolerance(spot), tracks=state.whaleTracks.length?state.whaleTracks:loadWhaleTracks();
+  const tol=Math.max(whaleTrackTolerance(spot),whaleImpactZoneGap(whaleDisplayRangeUsd())*.65), tracks=state.whaleTracks.length?state.whaleTracks:loadWhaleTracks();
   return tracks.filter(t=>!t.endedAt&&t.side===wall.side&&Math.abs(t.price-wall.price)<=tol).sort((a,b)=>Math.abs(a.price-wall.price)-Math.abs(b.price-wall.price))[0]||null;
 }
 function renderWhaleCanvas(metrics){
@@ -667,15 +715,15 @@ function renderWhaleCanvas(metrics){
   for(let i=0;i<=4;i++){ const y=pad.t+ih*i/4,p=maxP-(maxP-minP)*i/4;ctx.strokeStyle='#172131';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(pad.l+iw,y);ctx.stroke();ctx.fillStyle='#65768b';ctx.fillText(priceFmt(p),pad.l+iw+6,y+3); }
   for(let i=0;i<=4;i++){ const x=pad.l+iw*i/4,ts=start+lookback*i/4,d=new Date(ts);ctx.strokeStyle='rgba(28,42,61,.62)';ctx.beginPath();ctx.moveTo(x,pad.t);ctx.lineTo(x,pad.t+ih);ctx.stroke();ctx.fillStyle='#596b82';ctx.font='8px -apple-system,BlinkMacSystemFont,sans-serif';ctx.fillText(d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),Math.max(pad.l,x-15),h-8); }
   ctx.fillStyle='#71839a';ctx.font='8px -apple-system,BlinkMacSystemFont,sans-serif';ctx.fillText(`表示 ±$${rangeCompact(displayRange)} / 収集 ±$${rangeCompact(whaleCaptureRangeUsd())} / ${Math.round(lookback/3600000)}H`,pad.l+4,pad.t+10);
-  const tracks=(state.whaleTracks.length?state.whaleTracks:loadWhaleTracks()).filter(t=>(t.lastSeen||0)>=start&&t.price>=minP&&t.price<=maxP);
-  const maxN=Math.max(1,...tracks.map(t=>t.maxNotional||t.lastNotional||0),...(metrics?.walls||[]).map(x=>x.notional||0));
+  const rawTracks=state.whaleTracks.length?state.whaleTracks:loadWhaleTracks(), tracks=significantWhaleTracks(rawTracks,spot,minP,maxP,displayRange,start,end);
+  const maxN=Math.max(1,...tracks.map(t=>t.maxNotional||t.lastNotional||0),...(metrics?.impactZones||[]).map(x=>x.notional||0));
   for(const t of tracks){
     const x1=tx(Math.max(start,t.firstSeen)),x2=tx(Math.min(end,t.endedAt||end)),y=py(t.price),n=t.maxNotional||t.lastNotional||0,active=!t.endedAt,tier=whaleTier(n),strength=Math.sqrt(n/maxN),base=t.side==='sell'?[255,72,100]:[37,211,154];
     if(active&&n>=whaleStrongWallNotional()){ctx.strokeStyle=`rgba(${base[0]},${base[1]},${base[2]},${Math.min(.18,.05+.12*strength)})`;ctx.lineWidth=Math.max(12,tier.width*2.2);ctx.beginPath();ctx.moveTo(x1,y);ctx.lineTo(x2,y);ctx.stroke();}
     ctx.strokeStyle=`rgba(${base[0]},${base[1]},${base[2]},${Math.min(1,(active?.32:.10)+tier.alpha*.58*strength)})`;ctx.lineWidth=active?Math.max(tier.width,2.2+7.5*strength):Math.max(1.3,tier.width*.45);if(!active)ctx.setLineDash([7,5]);ctx.beginPath();ctx.moveTo(x1,y);ctx.lineTo(x2,y);ctx.stroke();ctx.setLineDash([]);
     if(active&&x2-x1>34&&n>=Math.max(Number(whaleConfig()?.minNotional)||0,whaleStrongWallNotional()/2)&&canPlaceLabel(y)){ctx.fillStyle=t.side==='sell'?'rgba(255,126,145,.94)':'rgba(96,230,187,.94)';ctx.font='7px -apple-system,BlinkMacSystemFont,sans-serif';ctx.fillText(`${tier.label?`${tier.label} `:''}${money(n)}`,Math.min(Math.max(pad.l+4,x2-54),pad.l+iw-52),y-5);}
   }
-  const currentBands=mergeWhaleBands(metrics?.walls||[],spot).filter(b=>Math.abs(b.price-spot)<=displayRange).slice(0,20);
+  const currentBands=(metrics?.impactZones||significantWhaleZones(metrics?.walls||[],spot,displayRange)).filter(b=>Math.abs(b.price-spot)<=displayRange).slice(0,6);
   for(const b of currentBands){
     const y=py(b.price),tier=whaleTier(b.notional),base=b.side==='sell'?[255,72,100]:[37,211,154],x1=pad.l+iw*.73,x2=pad.l+iw;
     ctx.strokeStyle=`rgba(${base[0]},${base[1]},${base[2]},${tier.alpha})`;ctx.lineWidth=tier.width;ctx.beginPath();ctx.moveTo(x1,y);ctx.lineTo(x2,y);ctx.stroke();
@@ -706,20 +754,20 @@ function renderWhaleOrderMap(){
   const card=$('btcWhaleCard'); if(!card) return; if(!state.asset.orderMap){card.classList.add('hidden');return;} card.classList.remove('hidden');
   const cfg=whaleConfig(), rangeDecision=whaleRangeDecision(), displayRange=whaleDisplayRangeUsd(), zoom=whaleChartZoom();
   setText('whaleTitle',cfg.title); setText('whaleSubtitle',cfg.subtitle); setText('whaleLegendPrice',`${state.asset.symbol}価格`);
-  setText('whaleHint',state.asset.source==='mexc'?'赤=大口売り指値、緑=大口買い指値。MEXC Futures公開L2板をLiqPulseが継続観測して可視化します。消失壁は板が見えなくなった推定で、約定・キャンセルの断定ではありません。実清算ラインではありません。':'赤=大口売り指値、緑=大口買い指値。横方向の長さ=壁が観測され続けた時間、線の太さ=最大注文額です。「消失壁」は前回まで存在した板が消えたことを示す推定で、約定・キャンセルの断定ではありません。CoinGlass等の取引所横断データではなくHyperliquid L2由来です。');
+  setText('whaleHint',state.asset.source==='mexc'?'赤=重要な大口売り指値、緑=重要な大口買い指値。MEXC Futures公開L2板は広く収集しつつ、画面には局面を動かし得る上位の壁だけを表示します。小規模板は内部分析には残します。消失壁は約定・キャンセルの断定ではなく、実清算ラインでもありません。':'赤=重要な大口売り指値、緑=重要な大口買い指値。L2板は広く収集しつつ、画面には局面を動かし得る上位の壁だけを表示します。横方向の長さ=継続時間、太さ=最大注文額。小規模板は内部分析には残します。CoinGlass等の取引所横断データではなくHyperliquid L2由来です。');
   const canvas=$('whaleCanvas'); if(canvas) canvas.setAttribute('aria-label',`${state.asset.symbol} 大口注文マップ`);
   const volText=Number.isFinite(rangeDecision.volPct)?` / 1H変動 ${(rangeDecision.volPct*100).toFixed(2)}%`:'';
-  setText('whaleRangeStatus',`AI ${rangeDecision.mode}: 表示 ±$${rangeCompact(displayRange)} / 収集 ±$${rangeCompact(rangeDecision.capture)}${volText} / ${zoom===1?'標準':zoom===1.35?'拡大':'最大'}`);
+  setText('whaleRangeStatus',`AI ${rangeDecision.mode}: 表示 ±$${rangeCompact(displayRange)} / 収集 ±$${rangeCompact(rangeDecision.capture)}${volText} / ${zoom===1?'標準':zoom===1.35?'拡大':'最大'} / 重要壁のみ表示`);
   setText('whaleSellTotalMeta',`AI収集範囲 ±$${rangeCompact(rangeDecision.capture)}`); setText('whaleBuyTotalMeta',`AI収集範囲 ±$${rangeCompact(rangeDecision.capture)}`);
   renderWhaleControls();
   const m=whaleMetrics(); if(!m){setText('whalePressureBadge','取得中');setText('whaleBookAge','—');setText('whaleOrderList','');return;}
   const fmt=x=>x?priceFmt(x.price):'—'; setText('whaleNearestSell',fmt(m.nearestSell)); setText('whaleNearestBuy',fmt(m.nearestBuy));
   setText('whaleNearestSellMeta',m.nearestSell?`+${((m.nearestSell.price/m.spot-1)*100).toFixed(2)}% / ${money(m.nearestSell.notional)}`:'—'); setText('whaleNearestBuyMeta',m.nearestBuy?`${((m.nearestBuy.price/m.spot-1)*100).toFixed(2)}% / ${money(m.nearestBuy.notional)}`:'—'); setText('whaleSellTotal',money(m.sellTotal)); setText('whaleBuyTotal',money(m.buyTotal));
-  const total=m.sellTotal+m.buyTotal,sellPct=total?m.sellTotal/total:.5,badge=$('whalePressureBadge'); let label='均衡',tone='neutral'; if(sellPct>=.62){label='売り壁優勢';tone='down';}else if(sellPct<=.38){label='買い壁優勢';tone='up';} if(badge){badge.textContent=label;badge.className=`signal-badge ${tone}`;} setText('whaleBookAge',state.asset.source==='mexc'?'MEXC LIVE + 履歴':'LIVE + 履歴');
-  let insight='大口板は拮抗しています。'; if(sellPct>=.62) insight=`上側の大口売り壁が優勢 (${(sellPct*100).toFixed(0)}%)。壁が長時間残るか、吸収・消失するかを監視。`; else if(sellPct<=.38) insight=`下側の大口買い壁が優勢 (${((1-sellPct)*100).toFixed(0)}%)。買い支えの継続時間と壁の消失を監視。`;
-  if(m.nearestSell&&Math.abs(m.nearestSell.price/m.spot-1)<.004) insight+=' 直上0.4%以内に大口売り壁あり。'; if(m.nearestBuy&&Math.abs(m.nearestBuy.price/m.spot-1)<.004) insight+=' 直下0.4%以内に大口買い壁あり。';
-  const bands=mergeWhaleBands(m.walls,m.spot),topSell=bands.filter(x=>x.side==='sell'&&x.price>m.spot)[0],topBuy=bands.filter(x=>x.side==='buy'&&x.price<m.spot)[0]; if(topSell&&topSell.notional>=whaleStrongWallNotional()) insight+=` 強い上壁 ${priceFmt(topSell.price)} (${money(topSell.notional)})。`; if(topBuy&&topBuy.notional>=whaleStrongWallNotional()) insight+=` 強い下壁 ${priceFmt(topBuy.price)} (${money(topBuy.notional)})。`; setText('whaleInsight',insight);
-  const list=$('whaleOrderList'); if(list){list.textContent='';const top=[...m.walls].sort((a,b)=>b.notional-a.notional).slice(0,10),max=Math.max(1,...top.map(x=>x.notional));for(const x of top){const row=document.createElement('div');row.className=`whale-order-row ${x.side}`;const p=document.createElement('b');p.textContent=priceFmt(x.price);const bar=document.createElement('div');bar.className='bar';const i=document.createElement('i');i.style.width=`${Math.max(4,100*x.notional/max)}%`;bar.appendChild(i);const val=document.createElement('strong');val.textContent=money(x.notional);const ds=document.createElement('small');const d=(x.price/m.spot-1)*100,tr=activeTrackForWall(x,m.spot);ds.textContent=`${d>=0?'+':''}${d.toFixed(2)}% · ${tr?formatDuration(Date.now()-tr.firstSeen):'new'}`;row.append(p,bar,val,ds);list.appendChild(row);}}
+  const total=m.sellTotal+m.buyTotal,sellPct=total?m.sellTotal/total:.5,badge=$('whalePressureBadge'); let label=total?'重要壁均衡':'局面級なし',tone='neutral'; if(total&&sellPct>=.62){label='重要売り壁優勢';tone='down';}else if(total&&sellPct<=.38){label='重要買い壁優勢';tone='up';} if(badge){badge.textContent=label;badge.className=`signal-badge ${tone}`;} setText('whaleBookAge',state.asset.source==='mexc'?'MEXC LIVE + 履歴':'LIVE + 履歴');
+  let insight=total?'局面級の大口壁はおおむね拮抗しています。':'現在の収集範囲内に、局面を動かす水準の重要大口壁はありません。小規模板は画面から除外し、内部分析だけに保持しています。'; if(total&&sellPct>=.62) insight=`重要な上側売り壁が優勢 (${(sellPct*100).toFixed(0)}%)。壁が長時間残るか、吸収・消失するかを監視。`; else if(total&&sellPct<=.38) insight=`重要な下側買い壁が優勢 (${((1-sellPct)*100).toFixed(0)}%)。買い支えの継続時間と壁の消失を監視。`;
+  if(m.nearestSell&&Math.abs(m.nearestSell.price/m.spot-1)<.004) insight+=' 直上0.4%以内に重要売り壁あり。'; if(m.nearestBuy&&Math.abs(m.nearestBuy.price/m.spot-1)<.004) insight+=' 直下0.4%以内に重要買い壁あり。';
+  const bands=m.impactZones||[],topSell=bands.filter(x=>x.side==='sell'&&x.price>m.spot).sort((a,b)=>b.notional-a.notional)[0],topBuy=bands.filter(x=>x.side==='buy'&&x.price<m.spot).sort((a,b)=>b.notional-a.notional)[0]; if(topSell) insight+=` 強い上壁 ${priceFmt(topSell.price)} (${money(topSell.notional)})。`; if(topBuy) insight+=` 強い下壁 ${priceFmt(topBuy.price)} (${money(topBuy.notional)})。`; setText('whaleInsight',insight);
+  const list=$('whaleOrderList'); if(list){list.textContent='';const top=[...(m.impactZones||[])].sort((a,b)=>b.notional-a.notional).slice(0,6),max=Math.max(1,...top.map(x=>x.notional));if(!top.length){const empty=document.createElement('div');empty.className='whale-empty';empty.textContent='現在、表示対象となる局面級の大口壁はありません。';list.appendChild(empty);}for(const x of top){const row=document.createElement('div');row.className=`whale-order-row ${x.side}`;const p=document.createElement('b');p.textContent=priceFmt(x.price);const bar=document.createElement('div');bar.className='bar';const i=document.createElement('i');i.style.width=`${Math.max(8,100*x.notional/max)}%`;bar.appendChild(i);const val=document.createElement('strong');val.textContent=money(x.notional);const ds=document.createElement('small');const d=(x.price/m.spot-1)*100,tr=activeTrackForWall(x,m.spot);ds.textContent=`${d>=0?'+':''}${d.toFixed(2)}% · ${tr?formatDuration(Date.now()-tr.firstSeen):'new'}`;row.append(p,bar,val,ds);list.appendChild(row);}}
   renderWhaleCanvas(m);
 }
 function setWhaleLookback(hours){ const h=[1,3,6].includes(Number(hours))?Number(hours):3; state.whaleLookbackMs=h*60*60*1000; renderWhaleOrderMap(); }
@@ -1145,12 +1193,20 @@ function renderRadar(){
   ['nearestShort','nearestLong','short5Total','long5Total'].forEach(id=>setText(id,'—'));
   setText('nearestShortMeta','—');setText('nearestLongMeta','—');setText('shortMomentum','—');setText('longMomentum','—');setText('radarBiasBadge','分析待ち');setText('radarReason','清算またはL2板データ取得後に表示します。');
 }
+function impactfulLiquidationLevels(levels,spot,side){
+  const arr=(levels||[]).filter(x=>x.side===side&&Number.isFinite(x.price)&&Number.isFinite(x.notional)&&((side==='long'&&x.price<spot)||(side==='short'&&x.price>spot)));
+  if(!arr.length) return [];
+  const vals=arr.map(x=>x.notional),max=Math.max(...vals),threshold=Math.max(whaleQuantile(vals,.72),max*.15);
+  const important=arr.filter(x=>x.notional>=threshold), byDistance=[...important].sort((a,b)=>Math.abs(a.price-spot)-Math.abs(b.price-spot)), bySize=[...important].sort((a,b)=>b.notional-a.notional), picked=[];
+  for(const x of [...byDistance.slice(0,1),...bySize]){ if(!picked.includes(x)) picked.push(x); if(picked.length>=state.clusterDepth) break; }
+  return picked.sort((a,b)=>side==='short'?a.price-b.price:b.price-a.price);
+}
 function selectVisibleLevels(){
   const spot=state.latestPrice || state.ctxByCoin.get(state.asset.symbol)?.markPx;
   const lv=state.heatmap?.levels||[];
   if(!Number.isFinite(spot)) return {spot,above:[],below:[]};
-  const below=lv.filter(x=>x.side==='long'&&x.price<spot).sort((a,b)=>b.price-a.price).slice(0,state.clusterDepth);
-  const above=lv.filter(x=>x.side==='short'&&x.price>spot).sort((a,b)=>a.price-b.price).slice(0,state.clusterDepth);
+  const below=impactfulLiquidationLevels(lv,spot,'long');
+  const above=impactfulLiquidationLevels(lv,spot,'short');
   return {spot,above,below};
 }
 
@@ -1574,8 +1630,8 @@ $('refreshBtn').addEventListener('click',()=>Promise.allSettled([fetchMeta(),fet
 $('testRelayBtn')?.addEventListener('click',testRelay);
 $('clearRelayBtn')?.addEventListener('click',clearRelay);
 $('flowWindow').addEventListener('change',(e)=>{ state.flowWindowMs=Number(e.target.value)||300000; renderFlow(); renderPressure(); });
-$('clusterDepth')?.addEventListener('change',(e)=>{ state.clusterDepth=Number(e.target.value)||8; renderHeatmap(); });
-$('sp500MapLimit')?.addEventListener('change',(e)=>{ state.sp500MapLimit=Number(e.target.value)||80; renderSp500Map(); });
+$('clusterDepth')?.addEventListener('change',(e)=>{ state.clusterDepth=Number(e.target.value)||5; renderHeatmap(); });
+$('sp500MapLimit')?.addEventListener('change',(e)=>{ state.sp500MapLimit=Number(e.target.value)||50; renderSp500Map(); });
 document.querySelectorAll('[data-whale-range-slot]').forEach(btn=>btn.addEventListener('click',()=>setWhaleRangeSlot(Number(btn.dataset.whaleRangeSlot))));
 $('advancedToggle')?.addEventListener('click',toggleAdvanced);
 $('diagnosticsToggle')?.addEventListener('click',toggleDiagnostics);
@@ -1598,4 +1654,4 @@ document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==
   }
 })();
 
-// LiqPulse v2.3.0
+// LiqPulse v2.4.0

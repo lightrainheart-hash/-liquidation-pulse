@@ -1,4 +1,4 @@
-# LiqPulse v2.3.0
+# LiqPulse v2.4.0
 
 ## KIOXIA / MEXC Stock Futures
 
@@ -21,12 +21,22 @@
 
 ## Deployment
 
-Upload **all files** to the GitHub repository and commit to `main`. Cloudflare Workers Builds should deploy automatically. Verify `/health` reports `2.3.0`.
+Upload **all files** to the GitHub repository and commit to `main`. Cloudflare Workers Builds should deploy automatically. Verify `/health` reports `2.4.0`.
 
-## v2.3.0 consistency / range fixes
+## v2.4.0 consistency / range fixes
 
 - `AI Quick View` is now always the first analysis card immediately below the price hero for every asset.
 - Order Map price-range buttons use stable slots instead of BTC-specific hard-coded values, fixing ETH / SOL / SP500 / KIOXIA controls.
 - Order Map ranges are generated per market from current price + robust 1-hour volatility, then snapped to readable price units.
 - The selected near / standard / wide slot is stored per asset, so AI can adapt the numeric range without breaking the user's selection.
 - Collection range can expand automatically in unusually volatile conditions while keeping each market's existing safety floor.
+
+## v2.4.0 impact-focus pass
+
+- Order Maps still collect the broad L2 range, but the UI now renders only market-impacting wall zones.
+- Nearby price levels are consolidated into zones before display, then filtered by absolute floor, percentile, and share of the side's largest wall.
+- At most three important zones per side are displayed to prevent red/green overplotting on iPhone.
+- Minor walls remain available to internal calculations/history and are not discarded at ingestion.
+- Historical wall tracks use the same significance filter plus a minimum persistence rule.
+- Actual liquidation-cluster rows are also filtered to major clusters; small clusters stay in the underlying dataset.
+- KIOXIA's visible wall floor was recalibrated upward so small MEXC book noise no longer looks like a market-moving event.
