@@ -1,4 +1,4 @@
-// LiqPulse v0.9.0 — Cloudflare Worker relay
+// LiqPulse v2.0.0 — Cloudflare Worker relay
 // Public market data only. No API keys, cookies, or user data are forwarded.
 
 const ALLOWED_HEATMAP_SYMBOLS = new Set(['BTC', 'ETH', 'SOL', 'XRP', 'ZEC']);
@@ -139,12 +139,12 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === '/health') {
-      return Response.json({ ok: true, service: 'liqpulse-relay', version: '1.3.2' }, { headers });
+      return Response.json({ ok: true, service: 'liqpulse-relay', version: '2.0.0' }, { headers });
     }
 
     if (url.pathname === '/capabilities') {
       return Response.json({
-        version: '1.3.2',
+        version: '2.0.0',
         market: ['BTC','ETH','SOL','XRP','ZEC','SP500','GOLD','SILVER'],
         heatmap: ['BTC','ETH','SOL','XRP','ZEC'],
         positioning: ['BTC','ETH','SOL','XRP','ZEC'],
@@ -237,20 +237,21 @@ export default {
           return await r.json();
         };
         const precise=await fetchBook(5);
-        if(symbol!=='BTC'){
-          return Response.json(precise,{headers:{...headers,'Cache-Control':'public, max-age=5'}});
-        }
-        // BTC gets additional aggregated books so the UI can visualize real resting liquidity
-        // across a much wider +/-$10,000 capture window. We never sum overlapping granularities.
+        // Multi-resolution L2 for every supported market. Each distance band comes from only one
+        // aggregation level, so overlapping books are never double-counted.
         const [mid,coarse]=await Promise.all([fetchBook(3).catch(()=>null),fetchBook(2).catch(()=>null)]);
         const bestBid=Number(precise?.levels?.[0]?.[0]?.px), bestAsk=Number(precise?.levels?.[1]?.[0]?.px);
         const spot=Number.isFinite(bestBid)&&Number.isFinite(bestAsk)?(bestBid+bestAsk)/2:(Number(bestBid)||Number(bestAsk));
+        if(!Number.isFinite(spot)) return Response.json(precise,{headers:{...headers,'Cache-Control':'public, max-age=5'}});
+        const maxRangeUsd=symbol==='BTC'?10000:Math.max(spot*0.12,spot*0.03);
+        const nearMax=symbol==='BTC'?Math.min(400,maxRangeUsd*.08):spot*.005;
+        const midMax=symbol==='BTC'?Math.min(2500,maxRangeUsd*.35):spot*.03;
         const pick=(raw,side,minDist,maxDist)=>((raw?.levels?.[side]||[]).filter(x=>{
-          const p=Number(x?.px), d=Math.abs(p-spot); return Number.isFinite(p)&&Number.isFinite(spot)&&d>=minDist&&d<maxDist;
+          const p=Number(x?.px),d=Math.abs(p-spot);return Number.isFinite(p)&&d>=minDist&&d<maxDist;
         }));
-        const wideBids=[...pick(precise,0,0,350),...pick(mid,0,350,2500),...pick(coarse,0,2500,10500)];
-        const wideAsks=[...pick(precise,1,0,350),...pick(mid,1,350,2500),...pick(coarse,1,2500,10500)];
-        return Response.json({...precise,wideLevels:[wideBids,wideAsks],wideMeta:{spot,rangeUsd:10000,sourceSigFigs:[5,3,2]}},{headers:{...headers,'Cache-Control':'public, max-age=5'}});
+        const wideBids=[...pick(precise,0,0,nearMax),...pick(mid,0,nearMax,midMax),...pick(coarse,0,midMax,maxRangeUsd)];
+        const wideAsks=[...pick(precise,1,0,nearMax),...pick(mid,1,nearMax,midMax),...pick(coarse,1,midMax,maxRangeUsd)];
+        return Response.json({...precise,wideLevels:[wideBids,wideAsks],wideMeta:{spot,rangeUsd:maxRangeUsd,sourceSigFigs:[5,3,2]}},{headers:{...headers,'Cache-Control':'public, max-age=5'}});
       }catch(error){ return Response.json({error:'book_upstream_failed',message:String(error?.message||error)},{status:502,headers}); }
     }
 

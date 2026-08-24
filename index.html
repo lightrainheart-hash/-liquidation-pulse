@@ -1,359 +1,334 @@
-<!doctype html>
+<!DOCTYPE html>
+
 <html lang="ja">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no" />
-  <meta name="theme-color" content="#090d16" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="LiqPulse" />
-  <link rel="manifest" href="./manifest.webmanifest" />
-  <link rel="apple-touch-icon" href="./icon-180.png" />
-  <link rel="stylesheet" href="./styles.css" />
-  <title>LiqPulse v1.3.2</title>
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no" name="viewport"/>
+<meta content="#090d16" name="theme-color"/>
+<meta content="yes" name="apple-mobile-web-app-capable"/>
+<meta content="black-translucent" name="apple-mobile-web-app-status-bar-style"/>
+<meta content="LiqPulse" name="apple-mobile-web-app-title"/>
+<link href="./manifest.webmanifest" rel="manifest"/>
+<link href="./icon-180.png" rel="apple-touch-icon"/>
+<link href="./styles.css" rel="stylesheet"/>
+<title>LiqPulse v2.0.0</title>
 </head>
 <body>
-  <main class="app-shell">
-    <header class="topbar">
-      <div>
-        <div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v1.3.2</span></div>
-        <h1>LiqPulse</h1>
-      </div>
-      <div id="connBadge" class="status offline"><span></span><b>接続中</b></div>
-    </header>
+<main class="app-shell">
+<header class="topbar">
+<div>
+<div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v2.0.0</span></div>
+<h1>LiqPulse</h1>
+</div>
+<div class="status offline" id="connBadge"><span></span><b>接続中</b></div>
+</header>
+<section aria-label="銘柄" class="asset-tabs" id="assetTabs"></section>
+<section class="hero card">
+<div>
+<div class="symbol-line"><span id="assetName">Bitcoin</span><small>Hyperliquid</small></div>
+<div class="price" id="price">—</div>
+<div class="meta-row">
+<span>Mark <b id="markPx">—</b></span>
+<span>OI <b id="openInterest">—</b></span>
+<span>Funding <b id="funding">—</b></span>
+</div>
+<div class="hero-status-row"><span class="pill" id="heroFreshness">更新待ち</span><span class="pill" id="heroDataQuality">データ品質 —</span></div></div>
+<button aria-label="更新" class="icon-btn" id="refreshBtn">↻</button>
+</section>
+<section class="card sp500-command-card hidden" id="sp500CommandCard">
+<div class="section-head">
+<div>
+<div class="card-title sp500-command-title">S&amp;P 500 Command Center</div>
+<div class="subtitle">指数の中身・大型株・セクター参加率をAI判断に統合</div>
+</div>
+<span class="signal-badge neutral" id="sp500CommandBadge">分析中</span>
+</div>
+<div class="sp500-command-main">
+<div class="sp500-command-verdict">
+<span>AI総合判断</span>
+<b id="sp500CommandAction">判定待ち</b>
+<small id="sp500CommandConfidence">信頼度 —</small>
+</div>
+<div class="sp500-health">
+<span>市場健全度</span>
+<b id="sp500HealthScore">—</b>
+<small id="sp500HealthLabel">取得中</small>
+</div>
+</div>
+<div class="sp500-command-grid">
+<div><span>上昇参加率</span><b id="sp500AdvPct">—</b><small id="sp500AdvMeta">—</small></div>
+<div><span>等ウェイト</span><b id="sp500EqualWeighted">—</b><small id="sp500WeightDivergence">—</small></div>
+<div><span>大型7社</span><b id="sp500Mega7">—</b><small id="sp500Mega7Meta">—</small></div>
+<div><span>上昇業種</span><b id="sp500PositiveSectors">—</b><small id="sp500SectorMeta">TradingView業種分類</small></div>
+</div>
+<div class="sp500-leadership-grid">
+<div><span>最強業種</span><b id="sp500StrongSector">—</b><small id="sp500StrongSectorMeta">—</small></div>
+<div><span>最弱業種</span><b id="sp500WeakSector">—</b><small id="sp500WeakSectorMeta">—</small></div>
+<div><span>上位寄与</span><b id="sp500TopLeader">—</b><small id="sp500TopLeaderMeta">—</small></div>
+<div><span>下位寄与</span><b id="sp500TopLaggard">—</b><small id="sp500TopLaggardMeta">—</small></div>
+</div>
+<div class="sp500-risk-strip neutral" id="sp500RiskStrip">市場内部リスクを分析中</div>
+<div class="quick-advice" id="sp500CommandAdvice">S&amp;P 500構成銘柄データを取得後に総合判断します。</div>
+<div class="hint">大型株だけで指数が動いている場合と、市場全体が同方向に参加している場合を区別します。これは売買判断の補助指標で、将来の値動きを保証するものではありません。</div>
+</section>
+<section class="card quick-view-card" id="cryptoQuickCard">
+<div class="section-head">
+<div>
+<div class="card-title quick-title">AI Quick View</div>
+<div class="subtitle">方向・候補・重要ラインを最優先表示</div>
+</div>
 
-    <section class="asset-tabs" id="assetTabs" aria-label="銘柄"></section>
-
-    <section class="hero card">
-      <div>
-        <div class="symbol-line"><span id="assetName">Bitcoin</span><small>Hyperliquid</small></div>
-        <div id="price" class="price">—</div>
-        <div class="meta-row">
-          <span>Mark <b id="markPx">—</b></span>
-          <span>OI <b id="openInterest">—</b></span>
-          <span>Funding <b id="funding">—</b></span>
-        </div>
-      </div>
-      <button id="refreshBtn" class="icon-btn" aria-label="更新">↻</button>
-    </section>
-
-    <section id="sp500CommandCard" class="card sp500-command-card hidden">
-      <div class="section-head">
-        <div>
-          <div class="card-title sp500-command-title">S&amp;P 500 Command Center</div>
-          <div class="subtitle">指数の中身・大型株・セクター参加率をAI判断に統合</div>
-        </div>
-        <span id="sp500CommandBadge" class="signal-badge neutral">分析中</span>
-      </div>
-
-      <div class="sp500-command-main">
-        <div class="sp500-command-verdict">
-          <span>AI総合判断</span>
-          <b id="sp500CommandAction">判定待ち</b>
-          <small id="sp500CommandConfidence">信頼度 —</small>
-        </div>
-        <div class="sp500-health">
-          <span>市場健全度</span>
-          <b id="sp500HealthScore">—</b>
-          <small id="sp500HealthLabel">取得中</small>
-        </div>
-      </div>
-
-      <div class="sp500-command-grid">
-        <div><span>上昇参加率</span><b id="sp500AdvPct">—</b><small id="sp500AdvMeta">—</small></div>
-        <div><span>等ウェイト</span><b id="sp500EqualWeighted">—</b><small id="sp500WeightDivergence">—</small></div>
-        <div><span>大型7社</span><b id="sp500Mega7">—</b><small id="sp500Mega7Meta">—</small></div>
-        <div><span>上昇業種</span><b id="sp500PositiveSectors">—</b><small id="sp500SectorMeta">TradingView業種分類</small></div>
-      </div>
-
-      <div class="sp500-leadership-grid">
-        <div><span>最強業種</span><b id="sp500StrongSector">—</b><small id="sp500StrongSectorMeta">—</small></div>
-        <div><span>最弱業種</span><b id="sp500WeakSector">—</b><small id="sp500WeakSectorMeta">—</small></div>
-        <div><span>上位寄与</span><b id="sp500TopLeader">—</b><small id="sp500TopLeaderMeta">—</small></div>
-        <div><span>下位寄与</span><b id="sp500TopLaggard">—</b><small id="sp500TopLaggardMeta">—</small></div>
-      </div>
-      <div id="sp500RiskStrip" class="sp500-risk-strip neutral">市場内部リスクを分析中</div>
-      <div id="sp500CommandAdvice" class="quick-advice">S&amp;P 500構成銘柄データを取得後に総合判断します。</div>
-      <div class="hint">大型株だけで指数が動いている場合と、市場全体が同方向に参加している場合を区別します。これは売買判断の補助指標で、将来の値動きを保証するものではありません。</div>
-    </section>
-
-    <section class="card quick-view-card">
-      <div class="section-head">
-        <div>
-          <div class="card-title quick-title">AI Quick View</div>
-          <div class="subtitle">いま見るべき3点だけ</div>
-        </div>
-        <span id="quickAlert" class="signal-badge neutral">分析中</span>
-      </div>
-
-      <div class="quick-primary">
-        <div class="quick-side">
-          <span>市場優勢</span>
-          <b id="quickDominance">—</b>
-          <small id="quickDominanceMeta">LONG — / SHORT —</small>
-        </div>
-        <div class="quick-action">
-          <span>AI判断のおすすめ</span>
-          <b id="quickAction">判定待ち</b>
-          <small id="quickActionMeta">信頼度 —</small>
-        </div>
-      </div>
-
-      <div class="quick-liq-title">直近の清算ライン</div>
-      <div class="quick-liq-grid">
-        <div class="quick-liq up">
-          <span>↑ ショート清算 / 上側トリガー</span>
-          <b id="quickShortLine">—</b>
-          <small id="quickShortLineMeta">上昇時のショート清算候補</small>
-        </div>
-        <div class="quick-liq down">
-          <span>↓ ロング清算 / 下側トリガー</span>
-          <b id="quickLongLine">—</b>
-          <small id="quickLongLineMeta">下落時のロング清算候補</small>
-        </div>
-      </div>
-      <div id="quickAdvice" class="quick-advice">データ取得後に、方向と売買候補を簡潔に表示します。</div>
-      <div class="hint">「おすすめ」はリアルタイム市場データを統合した売買判断の補助です。低信頼度では無理にLONG/SHORTを選ばず「見送り」を表示します。</div>
-    </section>
-
-    <section id="btcWhaleCard" class="card btc-whale-card hidden">
-      <div class="section-head">
-        <div>
-          <div class="card-title whale-title">BTC Whale Order Map</div>
-          <div class="subtitle">大口売り壁・買い壁の継続時間を価格×時間で可視化 / Hyperliquid L2</div>
-        </div>
-        <div class="engine-badges"><span id="whalePressureBadge" class="signal-badge neutral">分析中</span><span id="whaleBookAge" class="pill">—</span></div>
-      </div>
-      <div class="whale-toolbar whale-toolbar-main" aria-label="BTC Whale Map controls">
-        <div class="whale-control-group">
-          <span>履歴</span><button type="button" data-whale-hours="1" onclick="setWhaleLookback(1)">1H</button><button type="button" class="active" data-whale-hours="3" onclick="setWhaleLookback(3)">3H</button><button type="button" data-whale-hours="6" onclick="setWhaleLookback(6)">6H</button>
-        </div>
-        <div class="whale-control-group">
-          <span>価格幅</span><button type="button" data-whale-range="1000" onclick="setWhaleDisplayRange(1000)">±1k</button><button type="button" class="active" data-whale-range="3000" onclick="setWhaleDisplayRange(3000)">±3k</button><button type="button" data-whale-range="5000" onclick="setWhaleDisplayRange(5000)">±5k</button>
-        </div>
-        <div class="whale-control-group">
-          <span>拡大</span><button type="button" class="active" data-whale-zoom="1" onclick="setWhaleChartZoom(1)">標準</button><button type="button" data-whale-zoom="1.35" onclick="setWhaleChartZoom(1.35)">拡大</button><button type="button" data-whale-zoom="1.7" onclick="setWhaleChartZoom(1.7)">最大</button>
-        </div>
-        <small id="whaleRangeStatus">表示 ±$3,000 / 収集 ±$10,000</small>
-      </div>
-      <div class="whale-summary-grid">
-        <div><span>直上の大口売り壁</span><b id="whaleNearestSell">—</b><small id="whaleNearestSellMeta">—</small></div>
-        <div><span>直下の大口買い壁</span><b id="whaleNearestBuy">—</b><small id="whaleNearestBuyMeta">—</small></div>
-        <div><span>売り壁総額</span><b id="whaleSellTotal" class="red">—</b><small>収集範囲 ±$10,000</small></div>
-        <div><span>買い壁総額</span><b id="whaleBuyTotal" class="green">—</b><small>収集範囲 ±$10,000</small></div>
-      </div>
-      <div class="whale-chart-wrap">
-        <canvas id="whaleCanvas" class="whale-canvas" aria-label="BTC大口注文マップ"></canvas>
-        <div class="whale-legend"><span class="sell">売り壁</span><span class="buy">買い壁</span><span class="px">BTC価格</span><span class="ghost">消失壁(推定)</span></div>
-      </div>
-      <div id="whaleInsight" class="quick-advice">L2板を蓄積して大口注文の継続・消失を分析します。</div>
-      <div class="whale-list-head"><span>現在の大口注文</span><small>上位10件 / 継続時間</small></div>
-      <div id="whaleOrderList" class="whale-order-list"></div>
-      <div class="hint">赤=大口売り指値、緑=大口買い指値。横方向の長さ=壁が観測され続けた時間、線の太さ=最大注文額です。「消失壁」は前回まで存在した板が消えたことを示す推定で、約定・キャンセルの断定ではありません。CoinGlass等の取引所横断データではなくHyperliquid L2由来です。</div>
-    </section>
-
-    <section id="finvizMapCard" class="card sp500-map-card hidden">
-      <div class="section-head">
-        <div>
-          <div class="card-title">S&amp;P 500 Market Map</div>
-          <div class="subtitle">Finviz風のLiqPulse独自ヒートマップ / S&amp;P 500構成銘柄</div>
-        </div>
-        <a class="external-map-btn" href="https://finviz.com/map" target="_blank" rel="noopener noreferrer">Finviz公式 ↗</a>
-      </div>
-      <div class="sp500-map-summary">
-        <div><span>市場ムード</span><b id="sp500Mood">取得中</b></div>
-        <div><span>上昇 / 下落</span><b id="sp500Breadth">—</b></div>
-        <div><span>時価総額加重</span><b id="sp500Weighted">—</b></div>
-      </div>
-      <div class="sp500-map-toolbar">
-        <span id="sp500MapStatus">市場データ取得中</span>
-        <select id="sp500MapLimit" aria-label="表示銘柄数">
-          <option value="80">上位80</option>
-          <option value="200">上位200</option>
-          <option value="520">全構成</option>
-        </select>
-      </div>
-      <div id="sp500MapGrid" class="sp500-map-grid" aria-live="polite"></div>
-      <div class="hint">Finvizの画面を複製せず、S&amp;P 500構成銘柄の公開市場データからLiqPulseが独自描画します。無料公開データは遅延する場合があります。色は当日騰落率、タイルの大きさは時価総額順位の近似です。</div>
-    </section>
-
-    <section class="card decision-card">
-      <div class="section-head">
-        <div>
-          <div class="card-title">Liquidation Radar</div>
-          <div class="subtitle">最寄りトリガー・最大クラスター・15分変化</div>
-        </div>
-        <span id="radarBiasBadge" class="pill">分析待ち</span>
-      </div>
-      <div class="radar-grid">
-        <div class="radar-box up">
-          <span id="nearestShortLabel">↑ 最寄りショート清算</span>
-          <b id="nearestShort">—</b>
-          <small id="nearestShortMeta">—</small>
-        </div>
-        <div class="radar-box down">
-          <span id="nearestLongLabel">↓ 最寄りロング清算</span>
-          <b id="nearestLong">—</b>
-          <small id="nearestLongMeta">—</small>
-        </div>
-        <div class="radar-box">
-          <span id="short5Label">上側清算総額 ±5%</span>
-          <b id="short5Total" class="green">—</b>
-          <small id="shortMomentum">15分変化 —</small>
-        </div>
-        <div class="radar-box">
-          <span id="long5Label">下側清算総額 ±5%</span>
-          <b id="long5Total" class="red">—</b>
-          <small id="longMomentum">15分変化 —</small>
-        </div>
-      </div>
-      <div id="radarReason" class="radar-reason">清算データ取得後に表示します。</div>
-    </section>
-
-    <section class="card heatmap-card">
-      <div class="section-head">
-        <div>
-          <div class="card-title">清算クラスター</div>
-          <div class="subtitle">実清算データ + L2推定ゾーン / BTC・ETH・SOL・XRP・ZEC・SP500・GOLD・SILVER</div>
-        </div>
-        <div class="head-actions"><select id="clusterDepth" class="select-pill" aria-label="表示件数"><option value="5">5段</option><option value="8" selected>8段</option><option value="12">12段</option></select><span id="heatmapAge" class="pill">—</span></div>
-      </div>
-      <div id="clusterSummary" class="cluster-summary hidden"></div>
-      <div id="heatmapNotice" class="notice hidden"></div>
-      <div id="heatmap" class="heatmap"></div>
-    </section>
-
-
-    <section class="card engine-card">
-      <div class="section-head">
-        <div>
-          <div class="card-title">Market Bias Engine</div>
-          <div class="subtitle">清算・Taker・L/S・Funding・OIを統合した補助スコア</div>
-        </div>
-        <div class="engine-badges"><span id="engineLabel" class="signal-badge neutral">分析中</span><span id="engineConfidence" class="pill">信頼度 —</span></div>
-      </div>
-      <div class="engine-score-row"><div><span>上方向</span><b id="engineUp" class="green">50</b></div><div><span>下方向</span><b id="engineDown" class="red">50</b></div></div>
-      <div class="ratio engine-ratio"><i id="engineUpBar" style="width:50%"></i><i id="engineDownBar" style="width:50%"></i></div>
-      <ul id="engineReasons" class="engine-reasons"><li>データ取得中…</li></ul>
-      <div class="market-state-grid">
-        <div><span>OI 15分</span><b id="oi15m">—</b></div>
-        <div><span>価格 15分</span><b id="price15m">—</b></div>
-        <div><span>Funding状態</span><b id="fundingState">—</b></div>
-        <div><span>L/S Source</span><b id="positionSource">—</b></div>
-      </div>
-      <div class="hint">方向スコアは市場構造の偏りをまとめた補助指標で、将来価格や到達を保証する予測ではありません。</div>
-    </section>
-
-
-    <section id="positioningCard" class="card positioning-card">
-      <div class="section-head">
-        <div>
-          <div class="card-title">Long / Short Positioning</div>
-          <div class="subtitle">公開Long / Short統計 / 5分</div>
-        </div>
-        <span id="positioningAge" class="pill">取得待ち</span>
-      </div>
-      <div class="ls-list">
-        <div class="ls-row">
-          <div class="ls-head"><span>全口座 Account Ratio</span><b id="globalLsRatio">L/S —</b></div>
-          <div class="ratio-row small"><b class="green" id="globalLsLong">—</b><b class="red" id="globalLsShort">—</b></div>
-          <div class="ratio"><i id="globalLsLongBar"></i><i id="globalLsShortBar"></i></div>
-        </div>
-        <div class="ls-row">
-          <div class="ls-head"><span>Top Trader Account Ratio</span><b id="topAccountLsRatio">L/S —</b></div>
-          <div class="ratio-row small"><b class="green" id="topAccountLsLong">—</b><b class="red" id="topAccountLsShort">—</b></div>
-          <div class="ratio"><i id="topAccountLsLongBar"></i><i id="topAccountLsShortBar"></i></div>
-        </div>
-        <div class="ls-row">
-          <div class="ls-head"><span>Top Trader Position Ratio</span><b id="topPositionLsRatio">L/S —</b></div>
-          <div class="ratio-row small"><b class="green" id="topPositionLsLong">—</b><b class="red" id="topPositionLsShort">—</b></div>
-          <div class="ratio"><i id="topPositionLsLongBar"></i><i id="topPositionLsShortBar"></i></div>
-        </div>
-      </div>
-      <div id="positioningNote" class="hint">公開Long/Short統計を取得できるとここに表示します。</div>
-    </section>
-
-    <section class="grid two">
-      <article class="card">
-        <div class="section-head compact-head">
-          <div class="card-title">Taker Buy / Sell</div>
-          <select id="flowWindow" class="select-pill" aria-label="集計期間">
-            <option value="300000">5分</option>
-            <option value="900000">15分</option>
-            <option value="3600000">1時間</option>
-          </select>
-        </div>
-        <div class="ratio-row"><b class="green" id="buyPct">50.0%</b><b class="red" id="sellPct">50.0%</b></div>
-        <div class="ratio"><i id="buyBar"></i><i id="sellBar"></i></div>
-        <div class="flow-stats mini">
-          <div><span>BUY</span><b id="buyUsd" class="green">$0</b></div>
-          <div><span>SELL</span><b id="sellUsd" class="red">$0</b></div>
-        </div>
-        <div class="hint">成行買い / 成行売りの金額比率。建玉Long/Short比率ではありません。</div>
-      </article>
-
-      <article class="card">
-        <div class="card-title">Liquidation Bias</div>
-        <div class="ratio-row"><b class="green" id="shortLiqPct">—</b><b class="red" id="longLiqPct">—</b></div>
-        <div class="ratio liq-ratio"><i id="shortLiqBar"></i><i id="longLiqBar"></i></div>
-        <div class="hint">現在値から±10%以内の清算想定額を距離加重。緑=上側ショート清算、赤=下側ロング清算。</div>
-      </article>
-    </section>
-
-    <section class="card">
-      <div class="card-title">Pressure</div>
-      <div class="score"><span>上方向スクイーズ</span><b id="upScore">—</b></div>
-      <div class="score"><span>下方向カスケード</span><b id="downScore">—</b></div>
-      <div class="hint">清算クラスター・距離・Funding・Takerフローから算出する補助スコア。方向予測ではありません。</div>
-    </section>
-
-    <section class="card">
-      <div class="section-head">
-        <div>
-          <div class="card-title">リアルタイム取引フロー</div>
-          <div class="subtitle">WebSocket</div>
-        </div>
-        <span id="tradeCount" class="pill">0 trades</span>
-      </div>
-      <div class="flow-stats">
-        <div><span>BUY</span><b id="buyUsd2" class="green">$0</b></div>
-        <div><span>SELL</span><b id="sellUsd2" class="red">$0</b></div>
-      </div>
-    </section>
-
-
-    <section class="card compact">
-      <div class="section-head">
-        <div>
-          <div class="card-title">清算データ Relay</div>
-          <div class="subtitle">iPhone SafariのCORS制限回避用 / Cloudflare Workers</div>
-        </div>
-        <span id="relayBadge" class="pill">未設定</span>
-      </div>
-      <label class="field-label" for="relayUrl">Worker URL</label>
-      <input id="relayUrl" class="text-input" type="url" inputmode="url" placeholder="https://xxxxx.workers.dev" autocomplete="off" autocapitalize="off" spellcheck="false" />
-      <div class="button-row">
-        <button id="testRelayBtn" class="secondary-btn" type="button">保存して接続テスト</button>
-        <button id="clearRelayBtn" class="ghost-btn" type="button">削除</button>
-      </div>
-      <div id="relayTestResult" class="hint">未設定でも価格・OI・Funding・Tradesは動作します。BTC/ETH/SOLの実清算クラスターにはRelay推奨。</div>
-    </section>
-    <section class="card compact">
-      <div class="card-title">データ状態</div>
-      <ul class="data-status">
-        <li><span>価格 / Trades</span><b id="statusWs">接続待ち</b></li>
-        <li><span>OI / Funding</span><b id="statusInfo">取得待ち</b></li>
-        <li><span>清算マップ</span><b id="statusHeatmap">取得待ち</b></li>
-        <li><span>清算データ経路</span><b id="statusHeatmapRoute">—</b></li>
-        <li><span>Long / Short統計</span><b id="statusPositioning">取得待ち</b></li>
-        <li><span>L2板 / 推定反応帯</span><b id="statusOrderBook">取得待ち</b></li>
-      </ul>
-    </section>
-
-    <footer>
-      分析専用・注文機能なし。清算クラスターは価格到達を保証しません。Long/Short統計はBinance/Bybitの公開統計で、Hyperliquid建玉比率ではありません。実清算データがない銘柄ではHyperliquid L2板から推定反応帯を表示し、実清算ラインとは明確に区別します。SP500/GOLD/SILVERはtrade.xyz(HIP-3)市場データを利用します。
-    </footer>
-  </main>
-  <script src="./app.js?v=1.3.2" defer></script>
+<div class="quick-head-badges"><span class="signal-badge neutral" id="quickAlert">分析中</span><span class="pill" id="quickDataQuality">品質 —</span></div></div>
+<div class="quick-primary">
+<div class="quick-side">
+<span>市場優勢</span>
+<b id="quickDominance">—</b>
+<small id="quickDominanceMeta">LONG — / SHORT —</small>
+</div>
+<div class="quick-action">
+<span>AI判断のおすすめ</span>
+<b id="quickAction">判定待ち</b>
+<small id="quickActionMeta">信頼度 —</small>
+</div>
+</div><div class="quick-signal-grid"><div><span>Taker</span><b id="quickTaker">—</b><small id="quickTakerMeta">取得待ち</small></div><div><span>Long / Short</span><b id="quickPositioning">—</b><small id="quickPositioningMeta">取得待ち</small></div><div><span>Funding</span><b id="quickFunding">—</b><small id="quickFundingMeta">取得待ち</small></div><div><span>OI 15分</span><b id="quickOi">—</b><small id="quickOiMeta">取得待ち</small></div></div>
+<div class="quick-liq-heading"><div class="quick-liq-title">直近の清算ライン</div><span class="pill" id="quickLineMode">判定待ち</span></div>
+<div class="quick-liq-grid">
+<div class="quick-liq up">
+<span>↑ ショート清算 / 上側トリガー</span>
+<b id="quickShortLine">—</b>
+<small id="quickShortLineMeta">上昇時のショート清算候補</small>
+</div>
+<div class="quick-liq down">
+<span>↓ ロング清算 / 下側トリガー</span>
+<b id="quickLongLine">—</b>
+<small id="quickLongLineMeta">下落時のロング清算候補</small>
+</div>
+</div>
+<div class="quick-advice" id="quickAdvice">データ取得後に、方向と売買候補を簡潔に表示します。</div>
+<div class="hint">「おすすめ」はリアルタイム市場データを統合した売買判断の補助です。低信頼度では無理にLONG/SHORTを選ばず「見送り」を表示します。</div>
+</section>
+<section class="card btc-whale-card hidden" id="btcWhaleCard">
+<div class="section-head">
+<div>
+<div class="card-title whale-title">BTC Whale Order Map</div>
+<div class="subtitle">大口売り壁・買い壁の継続時間を価格×時間で可視化 / Hyperliquid L2</div>
+</div>
+<div class="engine-badges"><span class="signal-badge neutral" id="whalePressureBadge">分析中</span><span class="pill" id="whaleBookAge">—</span></div>
+</div>
+<div aria-label="BTC Whale Map controls" class="whale-toolbar whale-toolbar-main">
+<div class="whale-control-group">
+<span>履歴</span><button data-whale-hours="1" onclick="setWhaleLookback(1)" type="button">1H</button><button class="active" data-whale-hours="3" onclick="setWhaleLookback(3)" type="button">3H</button><button data-whale-hours="6" onclick="setWhaleLookback(6)" type="button">6H</button>
+</div>
+<div class="whale-control-group">
+<span>価格幅</span><button data-whale-range="1000" onclick="setWhaleDisplayRange(1000)" type="button">±1k</button><button class="active" data-whale-range="3000" onclick="setWhaleDisplayRange(3000)" type="button">±3k</button><button data-whale-range="5000" onclick="setWhaleDisplayRange(5000)" type="button">±5k</button>
+</div>
+<div class="whale-control-group">
+<span>拡大</span><button class="active" data-whale-zoom="1" onclick="setWhaleChartZoom(1)" type="button">標準</button><button data-whale-zoom="1.35" onclick="setWhaleChartZoom(1.35)" type="button">拡大</button><button data-whale-zoom="1.7" onclick="setWhaleChartZoom(1.7)" type="button">最大</button>
+</div>
+<small id="whaleRangeStatus">表示 ±$3,000 / 収集 ±$10,000</small>
+</div>
+<div class="whale-summary-grid">
+<div><span>直上の大口売り壁</span><b id="whaleNearestSell">—</b><small id="whaleNearestSellMeta">—</small></div>
+<div><span>直下の大口買い壁</span><b id="whaleNearestBuy">—</b><small id="whaleNearestBuyMeta">—</small></div>
+<div><span>売り壁総額</span><b class="red" id="whaleSellTotal">—</b><small>収集範囲 ±$10,000</small></div>
+<div><span>買い壁総額</span><b class="green" id="whaleBuyTotal">—</b><small>収集範囲 ±$10,000</small></div>
+</div>
+<div class="whale-chart-wrap">
+<canvas aria-label="BTC大口注文マップ" class="whale-canvas" id="whaleCanvas"></canvas>
+<div class="whale-legend"><span class="sell">売り壁</span><span class="buy">買い壁</span><span class="px">BTC価格</span><span class="ghost">消失壁(推定)</span></div>
+</div>
+<div class="quick-advice" id="whaleInsight">L2板を蓄積して大口注文の継続・消失を分析します。</div>
+<div class="whale-list-head"><span>現在の大口注文</span><small>上位10件 / 継続時間</small></div>
+<div class="whale-order-list" id="whaleOrderList"></div>
+<div class="hint">赤=大口売り指値、緑=大口買い指値。横方向の長さ=壁が観測され続けた時間、線の太さ=最大注文額です。「消失壁」は前回まで存在した板が消えたことを示す推定で、約定・キャンセルの断定ではありません。CoinGlass等の取引所横断データではなくHyperliquid L2由来です。</div>
+</section>
+<section class="card sp500-map-card hidden" id="finvizMapCard">
+<div class="section-head">
+<div>
+<div class="card-title">S&amp;P 500 Market Map</div>
+<div class="subtitle">Finviz風のLiqPulse独自ヒートマップ / S&amp;P 500構成銘柄</div>
+</div>
+<a class="external-map-btn" href="https://finviz.com/map" rel="noopener noreferrer" target="_blank">Finviz公式 ↗</a>
+</div>
+<div class="sp500-map-summary">
+<div><span>市場ムード</span><b id="sp500Mood">取得中</b></div>
+<div><span>上昇 / 下落</span><b id="sp500Breadth">—</b></div>
+<div><span>時価総額加重</span><b id="sp500Weighted">—</b></div>
+</div>
+<div class="sp500-map-toolbar">
+<span id="sp500MapStatus">市場データ取得中</span>
+<select aria-label="表示銘柄数" id="sp500MapLimit">
+<option value="80">上位80</option>
+<option value="200">上位200</option>
+<option value="520">全構成</option>
+</select>
+</div>
+<div aria-live="polite" class="sp500-map-grid" id="sp500MapGrid"></div>
+<div class="hint">Finvizの画面を複製せず、S&amp;P 500構成銘柄の公開市場データからLiqPulseが独自描画します。無料公開データは遅延する場合があります。色は当日騰落率、タイルの大きさは時価総額順位の近似です。</div>
+</section>
+<section class="card advanced-toggle-card" id="advancedToggleCard"><div><div class="card-title">詳細分析</div><div class="subtitle">必要なときだけ清算・ポジショニング・フロー詳細を展開</div></div><button aria-expanded="false" class="secondary-btn" id="advancedToggle" type="button">詳細を表示</button></section><section class="decision-card card advanced-panel">
+<div class="section-head">
+<div>
+<div class="card-title">Liquidation Radar</div>
+<div class="subtitle">最寄りトリガー・最大クラスター・15分変化</div>
+</div>
+<span class="pill" id="radarBiasBadge">分析待ち</span>
+</div>
+<div class="radar-grid">
+<div class="radar-box up">
+<span id="nearestShortLabel">↑ 最寄りショート清算</span>
+<b id="nearestShort">—</b>
+<small id="nearestShortMeta">—</small>
+</div>
+<div class="radar-box down">
+<span id="nearestLongLabel">↓ 最寄りロング清算</span>
+<b id="nearestLong">—</b>
+<small id="nearestLongMeta">—</small>
+</div>
+<div class="radar-box">
+<span id="short5Label">上側清算総額 ±5%</span>
+<b class="green" id="short5Total">—</b>
+<small id="shortMomentum">15分変化 —</small>
+</div>
+<div class="radar-box">
+<span id="long5Label">下側清算総額 ±5%</span>
+<b class="red" id="long5Total">—</b>
+<small id="longMomentum">15分変化 —</small>
+</div>
+</div>
+<div class="radar-reason" id="radarReason">清算データ取得後に表示します。</div>
+</section>
+<section class="advanced-panel card heatmap-card">
+<div class="section-head">
+<div>
+<div class="card-title">清算クラスター</div>
+<div class="subtitle">実清算クラスター（取得可能時） / 未取得時はL2推定反応帯</div>
+</div>
+<div class="head-actions"><select aria-label="表示件数" class="select-pill" id="clusterDepth"><option value="5">5段</option><option selected="" value="8">8段</option><option value="12">12段</option></select><span class="pill" id="heatmapAge">—</span></div>
+</div>
+<div class="cluster-summary hidden" id="clusterSummary"></div>
+<div class="notice hidden" id="heatmapNotice"></div>
+<div class="heatmap" id="heatmap"></div>
+</section>
+<section class="advanced-panel card engine-card">
+<div class="section-head">
+<div>
+<div class="card-title">Market Bias Engine</div>
+<div class="subtitle">清算・Taker・L/S・Funding・OIを統合した補助スコア</div>
+</div>
+<div class="engine-badges"><span class="signal-badge neutral" id="engineLabel">分析中</span><span class="pill" id="engineConfidence">信頼度 —</span></div>
+</div>
+<div class="engine-score-row"><div><span>上方向</span><b class="green" id="engineUp">50</b></div><div><span>下方向</span><b class="red" id="engineDown">50</b></div></div>
+<div class="ratio engine-ratio"><i id="engineUpBar" style="width:50%"></i><i id="engineDownBar" style="width:50%"></i></div>
+<ul class="engine-reasons" id="engineReasons"><li>データ取得中…</li></ul>
+<div class="market-state-grid">
+<div><span>OI 15分</span><b id="oi15m">—</b></div>
+<div><span>価格 15分</span><b id="price15m">—</b></div>
+<div><span>Funding状態</span><b id="fundingState">—</b></div>
+<div><span>L/S Source</span><b id="positionSource">—</b></div>
+</div>
+<div class="hint">方向スコアは市場構造の偏りをまとめた補助指標で、将来価格や到達を保証する予測ではありません。</div>
+</section>
+<section class="advanced-panel card positioning-card" id="positioningCard">
+<div class="section-head">
+<div>
+<div class="card-title">Long / Short Positioning</div>
+<div class="subtitle">公開Long / Short統計 / 5分</div>
+</div>
+<span class="pill" id="positioningAge">取得待ち</span>
+</div>
+<div class="ls-list">
+<div class="ls-row">
+<div class="ls-head"><span>全口座 Account Ratio</span><b id="globalLsRatio">L/S —</b></div>
+<div class="ratio-row small"><b class="green" id="globalLsLong">—</b><b class="red" id="globalLsShort">—</b></div>
+<div class="ratio"><i id="globalLsLongBar"></i><i id="globalLsShortBar"></i></div>
+</div>
+<div class="ls-row" id="topAccountRow">
+<div class="ls-head"><span>Top Trader Account Ratio</span><b id="topAccountLsRatio">L/S —</b></div>
+<div class="ratio-row small"><b class="green" id="topAccountLsLong">—</b><b class="red" id="topAccountLsShort">—</b></div>
+<div class="ratio"><i id="topAccountLsLongBar"></i><i id="topAccountLsShortBar"></i></div>
+</div>
+<div class="ls-row" id="topPositionRow">
+<div class="ls-head"><span>Top Trader Position Ratio</span><b id="topPositionLsRatio">L/S —</b></div>
+<div class="ratio-row small"><b class="green" id="topPositionLsLong">—</b><b class="red" id="topPositionLsShort">—</b></div>
+<div class="ratio"><i id="topPositionLsLongBar"></i><i id="topPositionLsShortBar"></i></div>
+</div>
+</div>
+<div class="hint" id="positioningNote">公開Long/Short統計を取得できるとここに表示します。</div>
+</section>
+<section class="advanced-panel two grid">
+<article class="card">
+<div class="section-head compact-head">
+<div class="card-title">Taker Buy / Sell</div>
+<select aria-label="集計期間" class="select-pill" id="flowWindow">
+<option value="300000">5分</option>
+<option value="900000">15分</option>
+<option value="3600000">1時間</option>
+</select>
+</div>
+<div class="ratio-row"><b class="green" id="buyPct">50.0%</b><b class="red" id="sellPct">50.0%</b></div>
+<div class="ratio"><i id="buyBar"></i><i id="sellBar"></i></div>
+<div class="flow-stats mini">
+<div><span>BUY</span><b class="green" id="buyUsd">$0</b></div>
+<div><span>SELL</span><b class="red" id="sellUsd">$0</b></div>
+</div>
+<div class="hint">成行買い / 成行売りの金額比率。建玉Long/Short比率ではありません。</div>
+</article>
+<article class="card">
+<div class="card-title">Liquidation Bias</div>
+<div class="ratio-row"><b class="green" id="shortLiqPct">—</b><b class="red" id="longLiqPct">—</b></div>
+<div class="ratio liq-ratio"><i id="shortLiqBar"></i><i id="longLiqBar"></i></div>
+<div class="hint">現在値から±10%以内の清算想定額を距離加重。緑=上側ショート清算、赤=下側ロング清算。</div>
+</article>
+</section>
+<section class="advanced-panel card">
+<div class="card-title">Pressure</div>
+<div class="score"><span>上方向スクイーズ</span><b id="upScore">—</b></div>
+<div class="score"><span>下方向カスケード</span><b id="downScore">—</b></div>
+<div class="hint">清算クラスター・距離・Funding・Takerフローから算出する補助スコア。方向予測ではありません。</div>
+</section>
+<section class="advanced-panel card">
+<div class="section-head">
+<div>
+<div class="card-title">リアルタイム取引フロー</div>
+<div class="subtitle">WebSocket</div>
+</div>
+<span class="pill" id="tradeCount">0 trades</span>
+</div>
+<div class="flow-stats">
+<div><span>BUY</span><b class="green" id="buyUsd2">$0</b></div>
+<div><span>SELL</span><b class="red" id="sellUsd2">$0</b></div>
+</div>
+</section>
+<section class="card diagnostics-toggle-card" id="diagnosticsToggleCard"><div><div class="card-title">接続・診断</div><div class="subtitle">通常は閉じたままでOK</div></div><button aria-expanded="false" class="ghost-btn" id="diagnosticsToggle" type="button">設定を表示</button></section><section class="card compact diagnostics-panel">
+<div class="section-head">
+<div>
+<div class="card-title">清算データ Relay</div>
+<div class="subtitle">iPhone SafariのCORS制限回避用 / Cloudflare Workers</div>
+</div>
+<span class="pill" id="relayBadge">未設定</span>
+</div>
+<label class="field-label" for="relayUrl">Worker URL</label>
+<input autocapitalize="off" autocomplete="off" class="text-input" id="relayUrl" inputmode="url" placeholder="https://xxxxx.workers.dev" spellcheck="false" type="url"/>
+<div class="button-row">
+<button class="secondary-btn" id="testRelayBtn" type="button">保存して接続テスト</button>
+<button class="ghost-btn" id="clearRelayBtn" type="button">削除</button>
+</div>
+<div class="hint" id="relayTestResult">未設定でも価格・OI・Funding・Tradesは動作します。BTC/ETH/SOLの実清算クラスターにはRelay推奨。</div>
+</section>
+<section class="card compact diagnostics-panel">
+<div class="card-title">データ状態</div>
+<ul class="data-status">
+<li><span>価格 / Trades</span><b id="statusWs">接続待ち</b></li>
+<li><span>OI / Funding</span><b id="statusInfo">取得待ち</b></li>
+<li><span>清算マップ</span><b id="statusHeatmap">取得待ち</b></li>
+<li><span>清算データ経路</span><b id="statusHeatmapRoute">—</b></li>
+<li><span>Long / Short統計</span><b id="statusPositioning">取得待ち</b></li>
+<li><span>L2板 / 推定反応帯</span><b id="statusOrderBook">取得待ち</b></li>
+</ul>
+</section>
+<footer>分析専用・注文機能なし。表示される方向・候補は複数の公開市場データを統合した補助シグナルです。実清算データとL2推定反応帯は明確に区別し、取得できない項目は推測値で埋めません。</footer>
+</main>
+<script defer="" src="./app.js?v=2.0.0"></script>
 </body>
 </html>
