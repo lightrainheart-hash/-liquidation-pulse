@@ -11,13 +11,13 @@
 <link href="./manifest.webmanifest" rel="manifest"/>
 <link href="./icon-180.png" rel="apple-touch-icon"/>
 <link href="./styles.css" rel="stylesheet"/>
-<title>LiqPulse v2.4.0</title>
+<title>LiqPulse v2.5.0</title>
 </head>
 <body>
 <main class="app-shell">
 <header class="topbar">
 <div>
-<div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v2.4.0</span></div>
+<div class="eyebrow">LIVE DERIVATIVES MONITOR <span class="version">v2.5.0</span></div>
 <h1>LiqPulse</h1>
 </div>
 <div class="status offline" id="connBadge"><span></span><b>接続中</b></div>
@@ -42,7 +42,7 @@
 <div class="subtitle">方向・候補・重要ラインを最優先表示</div>
 </div>
 
-<div class="quick-head-badges"><span class="signal-badge neutral" id="quickAlert">分析中</span><span class="pill" id="quickDataQuality">品質 —</span></div></div>
+<div class="quick-head-badges"><span class="signal-badge neutral" id="quickAlert">分析中</span><span class="pill" id="quickDataQuality">品質 —</span><span class="pill" id="quickValidation">検証中 0/12</span></div></div>
 <div class="quick-primary">
 <div class="quick-side">
 <span>市場優勢</span>
@@ -245,6 +245,16 @@
 </div>
 <div class="hint">方向スコアは市場構造の偏りをまとめた補助指標で、将来価格や到達を保証する予測ではありません。</div>
 </section>
+<section class="advanced-panel card validation-card" id="validationCard">
+<div class="section-head"><div><div class="card-title">Signal Validation</div><div class="subtitle">LONG/SHORT候補を15・30・60分後の実績で端末内検証</div></div><span class="pill" id="validationOverall">検証中</span></div>
+<div class="validation-grid">
+<div><span>15分</span><b id="validation15">—</b><small id="validation15Meta">蓄積中</small></div>
+<div><span>30分</span><b id="validation30">—</b><small id="validation30Meta">蓄積中</small></div>
+<div><span>60分</span><b id="validation60">—</b><small id="validation60Meta">蓄積中</small></div>
+</div>
+<div class="validation-summary"><b id="validationOverallMeta">12評価で信頼度補正開始</b></div>
+<div class="hint">端末内で観測できたシグナルだけを検証します。アプリを閉じて対象時刻の価格履歴がない場合は勝敗に含めません。小さすぎる値動きは「横ばい」として0.5扱いし、無理に勝敗へ分類しません。</div>
+</section>
 <section class="advanced-panel card positioning-card" id="positioningCard">
 <div class="section-head">
 <div>
@@ -345,6 +355,6 @@
 </section>
 <footer>分析専用・注文機能なし。表示される方向・候補は複数の公開市場データを統合した補助シグナルです。実清算データとL2推定反応帯は明確に区別し、取得できない項目は推測値で埋めません。</footer>
 </main>
-<script defer="" src="./app.js?v=2.4.0"></script>
+<script defer="" src="./app.js?v=2.5.0"></script>
 </body>
 </html>

@@ -54,6 +54,22 @@ const WHALE_RANGE_POLICIES = {
   SP500:{basePct:[0.0125,0.032,0.064],volMult:[0.70,1.50,2.60]},
   KIOXIA:{basePct:[0.0160,0.045,0.095],volMult:[0.80,1.70,3.00]},
 };
+
+// v2.5 precision profiles. The goal is not to force more LONG/SHORT calls, but to
+// demand stronger evidence in thinner/noisier markets and to weight the signals
+// that are structurally more useful for each venue.
+const DECISION_PROFILES = {
+  BTC:{minQuality:50,candidate:{confidence:54,edge:18},priority:{confidence:74,edge:32},outcomePct:{15:.0025,30:.0040,60:.0060},wallApproachPct:.0035,weights:{'清算偏り':1.15,'Taker':1.05,'OI/価格':1.05,'L2板':.90,'最寄り清算':1.15,'大口壁':1.20,'壁×清算':1.15}},
+  ETH:{minQuality:52,candidate:{confidence:56,edge:20},priority:{confidence:76,edge:34},outcomePct:{15:.0035,30:.0055,60:.0080},wallApproachPct:.0045,weights:{'清算偏り':1.10,'Taker':1.08,'OI/価格':1.08,'L2板':.90,'最寄り清算':1.10,'大口壁':1.15,'壁×清算':1.10}},
+  SOL:{minQuality:54,candidate:{confidence:58,edge:22},priority:{confidence:78,edge:36},outcomePct:{15:.0050,30:.0075,60:.0110},wallApproachPct:.0060,weights:{'清算偏り':1.00,'Taker':1.15,'OI/価格':1.15,'L2板':.90,'最寄り清算':1.00,'大口壁':1.10,'壁×清算':1.05}},
+  XRP:{minQuality:58,candidate:{confidence:60,edge:24},priority:{confidence:80,edge:38},outcomePct:{15:.0060,30:.0090,60:.0130},weights:{'清算偏り':.75,'Taker':1.15,'OI/価格':1.15,'Funding':1.05,'L2板':1.00}},
+  ZEC:{minQuality:58,candidate:{confidence:60,edge:24},priority:{confidence:80,edge:38},outcomePct:{15:.0070,30:.0100,60:.0150},weights:{'清算偏り':.70,'Taker':1.18,'OI/価格':1.18,'Funding':1.08,'L2板':1.00}},
+  SP500:{minQuality:60,candidate:{confidence:60,edge:20},priority:{confidence:78,edge:34},outcomePct:{15:.0012,30:.0020,60:.0030},wallApproachPct:.0025,weights:{'清算偏り':.35,'Taker':.80,'OI/価格':.85,'Funding':.45,'L2板':.55,'大口壁':.65,'市場参加率':1.35,'等ウェイト':1.20,'時価加重':1.10,'業種参加':1.20}},
+  KIOXIA:{minQuality:56,candidate:{confidence:60,edge:24},priority:{confidence:80,edge:40},outcomePct:{15:.0040,30:.0065,60:.0100},wallApproachPct:.0060,weights:{'Taker':1.15,'OI/価格':1.10,'Funding':.65,'L2板':.80,'Index乖離':1.25,'大口壁':1.30}},
+  GOLD:{minQuality:58,candidate:{confidence:60,edge:22},priority:{confidence:80,edge:36},outcomePct:{15:.0015,30:.0025,60:.0040},weights:{'Taker':1.00,'OI/価格':1.05,'Funding':.50,'L2板':.80}},
+  SILVER:{minQuality:58,candidate:{confidence:60,edge:22},priority:{confidence:80,edge:36},outcomePct:{15:.0025,30:.0040,60:.0060},weights:{'Taker':1.05,'OI/価格':1.08,'Funding':.50,'L2板':.80}},
+};
+function decisionProfile(symbol=state.asset.symbol){ return DECISION_PROFILES[symbol]||{minQuality:58,candidate:{confidence:60,edge:22},priority:{confidence:80,edge:36},outcomePct:{15:.004,30:.006,60:.009},weights:{}}; }
 const LAST_ASSET_KEY='liqpulse_last_asset';
 // Cold starts always open on BTC. We still remember the last asset for diagnostics/history,
 // but do not let a previous session unexpectedly change the startup screen.
@@ -93,6 +109,10 @@ const state = {
   freshness:{ws:0,meta:0,heatmap:0,positioning:0,orderbook:0,sp500:0},
   sourceErrors:{},
 };
+
+const SIGNAL_HORIZONS=[15,30,60];
+const SIGNAL_VALIDATION_VERSION=1;
+function signalValidationKey(symbol=state.asset.symbol){ return `liqpulse_signal_validation_v${SIGNAL_VALIDATION_VERSION}_${symbol}`; }
 
 const $ = (id) => document.getElementById(id);
 
@@ -208,6 +228,87 @@ function marketMomentum(){
   const oiChange=prev.oi>0?(ctx.openInterestUsd-prev.oi)/prev.oi:null;
   const priceChange=prev.price>0?(spot-prev.price)/prev.price:null;
   return {oiChange,priceChange};
+}
+
+
+function loadSignalValidation(symbol=state.asset.symbol){
+  try{
+    const raw=JSON.parse(localStorage.getItem(signalValidationKey(symbol))||'[]');
+    const cutoff=Date.now()-45*24*60*60*1000;
+    return Array.isArray(raw)?raw.filter(x=>Number(x?.ts)>=cutoff).slice(-500):[];
+  }catch{return []}
+}
+function saveSignalValidation(symbol,rows){ try{localStorage.setItem(signalValidationKey(symbol),JSON.stringify((rows||[]).slice(-500)));}catch{} }
+function closestSnapshotPrice(symbol,target,toleranceMs=7*60*1000){
+  const rows=loadMarketSnapshots(symbol); let best=null,delta=Infinity;
+  for(const x of rows){ if(!Number.isFinite(x.price)) continue; const d=Math.abs(Number(x.ts)-target); if(d<delta){delta=d;best=x;} }
+  if(best&&delta<=toleranceMs) return Number(best.price);
+  if(symbol===state.asset.symbol&&Math.abs(Date.now()-target)<=120000){
+    const c=state.ctxByCoin.get(symbol),p=state.latestPrice||c?.markPx; if(Number.isFinite(p)) return Number(p);
+  }
+  return NaN;
+}
+function evaluateSignalValidation(symbol=state.asset.symbol){
+  const rows=loadSignalValidation(symbol), profile=decisionProfile(symbol), now=Date.now(); let changed=false;
+  for(const rec of rows){
+    rec.outcomes=rec.outcomes||{};
+    for(const min of SIGNAL_HORIZONS){
+      const k=String(min); if(rec.outcomes[k]) continue;
+      const target=Number(rec.ts)+min*60000; if(now<target) continue;
+      const px=closestSnapshotPrice(symbol,target);
+      if(!Number.isFinite(px)){
+        if(now-target>30*60000){rec.outcomes[k]={status:'unavailable',targetTs:target};changed=true;}
+        continue;
+      }
+      const threshold=Number(profile.outcomePct?.[min])||0.004;
+      const rawRet=rec.price>0?(px-rec.price)/rec.price:0, signed=rawRet*(rec.direction==='long'?1:-1);
+      let status='flat',score=.5; if(signed>=threshold){status='win';score=1;} else if(signed<=-threshold){status='loss';score=0;}
+      rec.outcomes[k]={status,score,return:rawRet,price:px,targetTs:target,evaluatedAt:now};changed=true;
+    }
+  }
+  if(changed) saveSignalValidation(symbol,rows);
+  return rows;
+}
+function signalCalibrationStats(symbol=state.asset.symbol){
+  const rows=evaluateSignalValidation(symbol), by={}; let weightedScore=0,weightedN=0;
+  for(const min of SIGNAL_HORIZONS){
+    const vals=[];
+    for(const r of rows){const o=r.outcomes?.[String(min)];if(o&&Number.isFinite(o.score)) vals.push(o.score);}
+    const n=vals.length,rate=n?vals.reduce((a,x)=>a+x,0)/n:NaN; by[min]={n,rate};
+    const w=min===15?.25:min===30?.35:.40; if(n){weightedScore+=rate*n*w;weightedN+=n*w;}
+  }
+  const rate=weightedN?weightedScore/weightedN:NaN;
+  const n=SIGNAL_HORIZONS.reduce((a,m)=>a+(by[m]?.n||0),0);
+  return {n,rate,by,signals:rows.length};
+}
+function calibratedConfidence(raw,symbol=state.asset.symbol){
+  const stats=signalCalibrationStats(symbol); if(!Number.isFinite(stats.rate)||stats.n<12) return {value:Math.round(raw),stats,weight:0};
+  const weight=clamp((stats.n-8)/72,0,.25), empirical=stats.rate*100;
+  return {value:Math.round(clamp(raw*(1-weight)+empirical*weight,0,100)),stats,weight};
+}
+function maybeRecordSignal(q){
+  if(!q?.d||!q.action||q.action==='見送り') return;
+  const symbol=state.asset.symbol,profile=decisionProfile(symbol),ctx=state.ctxByCoin.get(symbol),price=state.latestPrice||ctx?.markPx;
+  if(!Number.isFinite(price)||q.d.quality.score<profile.minQuality) return;
+  const direction=q.action.startsWith('LONG')?'long':q.action.startsWith('SHORT')?'short':null; if(!direction) return;
+  const rows=loadSignalValidation(symbol),now=Date.now(),last=rows[rows.length-1];
+  if(last&&last.direction===direction&&now-Number(last.ts)<5*60000) return;
+  rows.push({id:`${symbol}-${now}`,ts:now,symbol,direction,action:q.action,price:Number(price),rawConfidence:q.d.rawConfidence??q.d.confidence,confidence:q.d.confidence,quality:q.d.quality.score,edge:q.edge,outcomes:{}});
+  saveSignalValidation(symbol,rows);
+}
+function renderSignalValidation(){
+  const stats=signalCalibrationStats(), pill=$('quickValidation');
+  const primary=stats.by[30], enough=stats.n>=12&&Number.isFinite(stats.rate);
+  if(pill){
+    pill.textContent=enough?`検証 ${(stats.rate*100).toFixed(0)}% / ${stats.n}`:`検証中 ${Math.min(stats.n,11)}/12`;
+    pill.className=`pill ${enough?(stats.rate>=.58?'quality-good':stats.rate<.45?'quality-low':'quality-mid'):''}`.trim();
+    pill.title='過去シグナルを15/30/60分後の価格で自動検証。端末内履歴のみで、サンプル不足時は信頼度補正に使いません。';
+  }
+  for(const min of SIGNAL_HORIZONS){
+    const x=stats.by[min],id=`validation${min}`; setText(id,x.n?`${(x.rate*100).toFixed(0)}%`:'—'); setText(`${id}Meta`,x.n?`${x.n}件`:'蓄積中');
+  }
+  setText('validationOverall',enough?`${(stats.rate*100).toFixed(0)}%`:'検証中');
+  setText('validationOverallMeta',enough?`${stats.n}評価 / 端末内実績`:`12評価で信頼度補正開始（現在 ${stats.n}）`);
 }
 
 async function fetchMeta(){
@@ -640,25 +741,56 @@ function whaleTrackTolerance(spot){
 }
 function updateWhaleTracks(walls,spot,now){
   if(!state.whaleTracks.length) state.whaleTracks=loadWhaleTracks();
-  const tolerance=whaleTrackTolerance(spot), matched=new Set();
+  const tolerance=whaleTrackTolerance(spot), matched=new Set(), profile=decisionProfile(), approachPct=Number(profile.wallApproachPct)||.0045;
   for(const wall of walls){
     let best=-1,bestDist=Infinity;
     for(let i=0;i<state.whaleTracks.length;i++){
       const t=state.whaleTracks[i]; if(t.side!==wall.side||t.endedAt) continue;
       const d=Math.abs(t.price-wall.price); if(d<=tolerance&&d<bestDist){best=i;bestDist=d;}
     }
+    const distancePct=Math.abs(wall.price-spot)/Math.max(spot,Number.EPSILON);
     if(best>=0){
-      const t=state.whaleTracks[best]; matched.add(t.id); const samples=(t.samples||1)+1;
+      const t=state.whaleTracks[best]; matched.add(t.id); const samples=(t.samples||1)+1,prevN=Number(t.lastNotional)||0,prevDist=Number(t.lastDistancePct);
+      if(prevN>0&&wall.notional>=prevN*1.18) t.replenishments=(t.replenishments||0)+1;
+      if(distancePct<=approachPct) t.approachSamples=(t.approachSamples||0)+1;
+      if(Number.isFinite(prevDist)&&prevDist<=approachPct&&distancePct>prevDist+approachPct*.30&&now-Number(t.lastDefenseAt||0)>60000){t.defended=(t.defended||0)+1;t.lastDefenseAt=now;}
       t.price=(t.price*(samples-1)+wall.price)/samples; t.lastSeen=now; t.lastNotional=wall.notional; t.maxNotional=Math.max(t.maxNotional||0,wall.notional); t.samples=samples;
+      t.lastDistancePct=distancePct;t.minDistancePct=Math.min(Number.isFinite(t.minDistancePct)?t.minDistancePct:Infinity,distancePct);t.lastSpot=spot;
     }else{
-      const t={id:`${state.asset.symbol}-${wall.side}-${now}-${Math.round(wall.price*100)}`,side:wall.side,price:wall.price,firstSeen:now,lastSeen:now,endedAt:null,lastNotional:wall.notional,maxNotional:wall.notional,samples:1};
+      const t={id:`${state.asset.symbol}-${wall.side}-${now}-${Math.round(wall.price*100)}`,side:wall.side,price:wall.price,firstSeen:now,lastSeen:now,endedAt:null,lastNotional:wall.notional,maxNotional:wall.notional,firstNotional:wall.notional,samples:1,replenishments:0,approachSamples:distancePct<=approachPct?1:0,defended:0,lastDistancePct:distancePct,minDistancePct:distancePct,lastSpot:spot,vanishedNear:false};
       state.whaleTracks.push(t); matched.add(t.id);
     }
   }
-  for(const t of state.whaleTracks){ if(!t.endedAt&&!matched.has(t.id)&&now-(t.lastSeen||0)>25000) t.endedAt=t.lastSeen||now; }
+  for(const t of state.whaleTracks){
+    if(!t.endedAt&&!matched.has(t.id)&&now-(t.lastSeen||0)>25000){
+      t.endedAt=t.lastSeen||now;
+      if(Number(t.lastDistancePct)<=approachPct*1.25) t.vanishedNear=true;
+    }
+  }
   const cutoff=now-WHALE_RETENTION_MS;
   state.whaleTracks=state.whaleTracks.filter(t=>(t.lastSeen||t.firstSeen)>=cutoff).slice(-320); saveWhaleTracks();
 }
+function whaleWallConfidence(track,wall,spot){
+  if(!track) return {score:35,label:'新規'};
+  const now=Date.now(),duration=Math.max(0,(track.endedAt||now)-Number(track.firstSeen||now)),strong=Math.max(1,whaleStrongWallNotional()),n=Number(wall?.notional??track.maxNotional??track.lastNotional)||0;
+  let score=18;
+  score+=clamp(duration/(30*60000),0,1)*24;
+  score+=clamp((Number(track.samples)||1)/18,0,1)*14;
+  score+=clamp((Number(track.replenishments)||0)/4,0,1)*14;
+  score+=clamp((Number(track.defended)||0)/2,0,1)*12;
+  score+=clamp(Math.log10(1+n/strong)/Math.log10(5),0,1)*18;
+  if(track.vanishedNear) score-=24;
+  if(duration<20000&&n<strong*1.6) score-=10;
+  const flow=flowTotals(),buyShare=flow.total?flow.buy/flow.total:NaN,dist=Math.abs((wall?.price??track.price)-spot)/Math.max(spot,Number.EPSILON),approach=Number(decisionProfile().wallApproachPct)||.0045;
+  if(!track.endedAt&&dist<=approach&&Number.isFinite(buyShare)){
+    if(track.side==='sell'&&buyShare>=.62) score+=6;
+    if(track.side==='buy'&&buyShare<=.38) score+=6;
+  }
+  score=Math.round(clamp(score,0,100));
+  const label=score>=78?'高信頼':score>=58?'有力':score>=40?'監視':'低信頼';
+  return {score,label};
+}
+
 function recordWhaleSnapshot(ob){
   if(!state.asset.orderMap||!ob) return;
   const now=Date.now(); if(state.whaleLastBookAt && now-state.whaleLastBookAt<9000) return; state.whaleLastBookAt=now;
@@ -670,9 +802,12 @@ function recordWhaleSnapshot(ob){
 function whaleMetrics(){
   if(!state.asset.orderMap) return null;
   const ob=state.orderbook, spot=state.latestPrice||state.ctxByCoin.get(state.asset.symbol)?.markPx; if(!ob||!Number.isFinite(spot)) return null;
-  const rows=whaleRows(ob,spot), walls=selectWhaleWalls(rows), impactZones=significantWhaleZones(walls,spot,whaleCaptureRangeUsd());
+  const rows=whaleRows(ob,spot), walls=selectWhaleWalls(rows);
+  const impactZones=significantWhaleZones(walls,spot,whaleCaptureRangeUsd()).map(z=>{
+    const tr=activeTrackForWall(z,spot),rel=whaleWallConfidence(tr,z,spot); return {...z,wallConfidence:rel.score,wallConfidenceLabel:rel.label,track:tr||null};
+  });
   const sells=impactZones.filter(x=>x.side==='sell'&&x.price>=spot), buys=impactZones.filter(x=>x.side==='buy'&&x.price<=spot);
-  const sellTotal=sells.reduce((a,x)=>a+x.notional,0), buyTotal=buys.reduce((a,x)=>a+x.notional,0);
+  const sellTotal=sells.reduce((a,x)=>a+x.notional*(.55+.45*(x.wallConfidence||35)/100),0), buyTotal=buys.reduce((a,x)=>a+x.notional*(.55+.45*(x.wallConfidence||35)/100),0);
   const nearestSell=[...sells].sort((a,b)=>a.price-b.price)[0]||null, nearestBuy=[...buys].sort((a,b)=>b.price-a.price)[0]||null;
   return {spot,walls,impactZones,sells,buys,sellTotal,buyTotal,nearestSell,nearestBuy};
 }
@@ -762,12 +897,12 @@ function renderWhaleOrderMap(){
   renderWhaleControls();
   const m=whaleMetrics(); if(!m){setText('whalePressureBadge','取得中');setText('whaleBookAge','—');setText('whaleOrderList','');return;}
   const fmt=x=>x?priceFmt(x.price):'—'; setText('whaleNearestSell',fmt(m.nearestSell)); setText('whaleNearestBuy',fmt(m.nearestBuy));
-  setText('whaleNearestSellMeta',m.nearestSell?`+${((m.nearestSell.price/m.spot-1)*100).toFixed(2)}% / ${money(m.nearestSell.notional)}`:'—'); setText('whaleNearestBuyMeta',m.nearestBuy?`${((m.nearestBuy.price/m.spot-1)*100).toFixed(2)}% / ${money(m.nearestBuy.notional)}`:'—'); setText('whaleSellTotal',money(m.sellTotal)); setText('whaleBuyTotal',money(m.buyTotal));
+  setText('whaleNearestSellMeta',m.nearestSell?`+${((m.nearestSell.price/m.spot-1)*100).toFixed(2)}% / ${money(m.nearestSell.notional)} / 信頼${m.nearestSell.wallConfidence||35}`:'—'); setText('whaleNearestBuyMeta',m.nearestBuy?`${((m.nearestBuy.price/m.spot-1)*100).toFixed(2)}% / ${money(m.nearestBuy.notional)} / 信頼${m.nearestBuy.wallConfidence||35}`:'—'); setText('whaleSellTotal',money(m.sellTotal)); setText('whaleBuyTotal',money(m.buyTotal));
   const total=m.sellTotal+m.buyTotal,sellPct=total?m.sellTotal/total:.5,badge=$('whalePressureBadge'); let label=total?'重要壁均衡':'局面級なし',tone='neutral'; if(total&&sellPct>=.62){label='重要売り壁優勢';tone='down';}else if(total&&sellPct<=.38){label='重要買い壁優勢';tone='up';} if(badge){badge.textContent=label;badge.className=`signal-badge ${tone}`;} setText('whaleBookAge',state.asset.source==='mexc'?'MEXC LIVE + 履歴':'LIVE + 履歴');
   let insight=total?'局面級の大口壁はおおむね拮抗しています。':'現在の収集範囲内に、局面を動かす水準の重要大口壁はありません。小規模板は画面から除外し、内部分析だけに保持しています。'; if(total&&sellPct>=.62) insight=`重要な上側売り壁が優勢 (${(sellPct*100).toFixed(0)}%)。壁が長時間残るか、吸収・消失するかを監視。`; else if(total&&sellPct<=.38) insight=`重要な下側買い壁が優勢 (${((1-sellPct)*100).toFixed(0)}%)。買い支えの継続時間と壁の消失を監視。`;
   if(m.nearestSell&&Math.abs(m.nearestSell.price/m.spot-1)<.004) insight+=' 直上0.4%以内に重要売り壁あり。'; if(m.nearestBuy&&Math.abs(m.nearestBuy.price/m.spot-1)<.004) insight+=' 直下0.4%以内に重要買い壁あり。';
   const bands=m.impactZones||[],topSell=bands.filter(x=>x.side==='sell'&&x.price>m.spot).sort((a,b)=>b.notional-a.notional)[0],topBuy=bands.filter(x=>x.side==='buy'&&x.price<m.spot).sort((a,b)=>b.notional-a.notional)[0]; if(topSell) insight+=` 強い上壁 ${priceFmt(topSell.price)} (${money(topSell.notional)})。`; if(topBuy) insight+=` 強い下壁 ${priceFmt(topBuy.price)} (${money(topBuy.notional)})。`; setText('whaleInsight',insight);
-  const list=$('whaleOrderList'); if(list){list.textContent='';const top=[...(m.impactZones||[])].sort((a,b)=>b.notional-a.notional).slice(0,6),max=Math.max(1,...top.map(x=>x.notional));if(!top.length){const empty=document.createElement('div');empty.className='whale-empty';empty.textContent='現在、表示対象となる局面級の大口壁はありません。';list.appendChild(empty);}for(const x of top){const row=document.createElement('div');row.className=`whale-order-row ${x.side}`;const p=document.createElement('b');p.textContent=priceFmt(x.price);const bar=document.createElement('div');bar.className='bar';const i=document.createElement('i');i.style.width=`${Math.max(8,100*x.notional/max)}%`;bar.appendChild(i);const val=document.createElement('strong');val.textContent=money(x.notional);const ds=document.createElement('small');const d=(x.price/m.spot-1)*100,tr=activeTrackForWall(x,m.spot);ds.textContent=`${d>=0?'+':''}${d.toFixed(2)}% · ${tr?formatDuration(Date.now()-tr.firstSeen):'new'}`;row.append(p,bar,val,ds);list.appendChild(row);}}
+  const list=$('whaleOrderList'); if(list){list.textContent='';const top=[...(m.impactZones||[])].sort((a,b)=>b.notional-a.notional).slice(0,6),max=Math.max(1,...top.map(x=>x.notional));if(!top.length){const empty=document.createElement('div');empty.className='whale-empty';empty.textContent='現在、表示対象となる局面級の大口壁はありません。';list.appendChild(empty);}for(const x of top){const row=document.createElement('div');row.className=`whale-order-row ${x.side}`;const p=document.createElement('b');p.textContent=priceFmt(x.price);const bar=document.createElement('div');bar.className='bar';const i=document.createElement('i');i.style.width=`${Math.max(8,100*x.notional/max)}%`;bar.appendChild(i);const val=document.createElement('strong');val.textContent=money(x.notional);const ds=document.createElement('small');const d=(x.price/m.spot-1)*100,tr=activeTrackForWall(x,m.spot);ds.textContent=`${d>=0?'+':''}${d.toFixed(2)}% · 信頼${x.wallConfidence||35} · ${tr?formatDuration(Date.now()-tr.firstSeen):'new'}`;row.append(p,bar,val,ds);list.appendChild(row);}}
   renderWhaleCanvas(m);
 }
 function setWhaleLookback(hours){ const h=[1,3,6].includes(Number(hours))?Number(hours):3; state.whaleLookbackMs=h*60*60*1000; renderWhaleOrderMap(); }
@@ -1354,6 +1489,30 @@ function renderPositioning(){
   }
 }
 
+function whaleDecisionSignal(){
+  const m=whaleMetrics(); if(!m?.impactZones?.length) return null;
+  const force=(z)=>{const d=Math.max(Math.abs(distPct(z.price,m.spot)),.0008),rel=clamp((z.wallConfidence||35)/100,.2,1);return z.notional*rel/Math.sqrt(d);};
+  const sell=m.sells.reduce((a,z)=>a+force(z),0),buy=m.buys.reduce((a,z)=>a+force(z),0),total=sell+buy;
+  if(!total) return null;
+  const score=clamp((buy-sell)/total,-1,1),best=[...m.impactZones].sort((a,b)=>(b.notional*(b.wallConfidence||35))-(a.notional*(a.wallConfidence||35)))[0];
+  return {score,buy,sell,best,metrics:m};
+}
+function wallLiquidationConfluence(){
+  if(!state.heatmap?.levels?.length||!state.asset.orderMap) return null;
+  const m=whaleMetrics(); if(!m?.impactZones?.length) return null;
+  let best=null;
+  for(const w of m.impactZones){
+    const expected=w.side==='sell'?'short':'long';
+    for(const l of state.heatmap.levels){
+      if(l.side!==expected||!Number.isFinite(l.price)||!Number.isFinite(l.notional)) continue;
+      const gap=Math.abs(l.price-w.price)/m.spot; if(gap>.0035) continue;
+      const value=w.notional*l.notional*(.4+.6*(w.wallConfidence||35)/100)/(1+gap*500);
+      if(!best||value>best.value) best={wall:w,liq:l,gap,value,side:w.side};
+    }
+  }
+  return best;
+}
+
 function freshnessScore(source,fullMs,staleMs){
   const age=ageMs(source);
   if(!Number.isFinite(age)) return 0;
@@ -1393,10 +1552,11 @@ function decisionMetrics(){
   const mm=marketMomentum();
   const radar=radarMetrics();
   const ez=estimatedTriggerZones();
-  const parts=[];
+  const parts=[], profile=decisionProfile();
   const add=(name,score,weight,reason='')=>{
-    if(!Number.isFinite(score)||weight<=0) return;
-    parts.push({name,score:clamp(score,-1,1),weight,reason});
+    const multiplier=Number(profile.weights?.[name]??1), adjustedWeight=weight*multiplier;
+    if(!Number.isFinite(score)||adjustedWeight<=0) return;
+    parts.push({name,score:clamp(score,-1,1),weight:adjustedWeight,reason});
   };
 
   if(liq){
@@ -1434,6 +1594,19 @@ function decisionMetrics(){
     const sf=radar.nearestShort.notional/su, lf=radar.nearestLong.notional/ld, total=sf+lf;
     if(total>0) add('最寄り清算',clamp((sf-lf)/total,-1,1),.12,'最寄り清算の距離×規模');
   }
+  const whaleSig=whaleDecisionSignal();
+  if(whaleSig&&Math.abs(whaleSig.score)>.08){
+    const b=whaleSig.best,rel=b?.wallConfidence||35;
+    add('大口壁',whaleSig.score,.12,`重要壁 ${whaleSig.score>=0?'買い支え':'売り抵抗'}優勢 / 最重要 ${b?priceFmt(b.price):'—'} 信頼${rel}`);
+  }
+  const confluence=wallLiquidationConfluence();
+  if(confluence&&Number.isFinite(buyShare)){
+    // A wall + liquidation cluster is a branch point. Only use it directionally when taker flow confirms a break/defense.
+    let cs=0;
+    if(confluence.side==='sell') cs=buyShare>=.60?clamp((buyShare-.5)*2,0,1):buyShare<=.40?-clamp((.5-buyShare)*2,0,1):0;
+    else cs=buyShare<=.40?-clamp((.5-buyShare)*2,0,1):buyShare>=.60?clamp((buyShare-.5)*2,0,1):0;
+    if(Math.abs(cs)>.08) add('壁×清算',cs,.08,`大口壁と実清算が${(confluence.gap*100).toFixed(2)}%以内で重複`);
+  }
   if(state.asset.symbol==='SP500'){
     const sp=sp500Analytics();
     if(sp){
@@ -1449,27 +1622,31 @@ function decisionMetrics(){
   const up=clamp(50+avg*50,0,100), down=100-up;
   const quality=dataQualityMetrics();
   const strength=Math.abs(avg);
-  const confidence=Math.round(clamp(quality.score*(0.12+0.88*strength),0,100));
+  const rawConfidence=Math.round(clamp(quality.score*(0.12+0.88*strength),0,100));
+  const calibration=calibratedConfidence(rawConfidence);
+  const confidence=calibration.value;
   let label='中立',tone='neutral';
   if(up>=67){label='上方向優勢';tone='up';}
   else if(up>=57){label='やや上方向';tone='up';}
   else if(up<=33){label='下方向優勢';tone='down';}
   else if(up<=43){label='やや下方向';tone='down';}
   const reasons=[...parts].sort((a,b)=>Math.abs(b.score*b.weight)-Math.abs(a.score*a.weight)).filter(x=>x.reason).slice(0,4).map(x=>x.reason);
-  return {up,down,avg,confidence,label,tone,reasons,used:parts.map(x=>x.name),mm,quality,parts};
+  return {up,down,avg,confidence,rawConfidence,calibration,label,tone,reasons,used:parts.map(x=>x.name),mm,quality,parts,confluence};
 }
 function quickDecision(){
   const d=decisionMetrics(), radar=radarMetrics(), delta=d.up-d.down, edge=Math.abs(delta);
   let dominance='均衡',dominanceTone='neutral';
   if(delta>=10){dominance='LONG優勢';dominanceTone='up';} else if(delta<=-10){dominance='SHORT優勢';dominanceTone='down';}
+  const profile=decisionProfile();
   let action='見送り',actionTone='neutral';
-  if(d.confidence>=52&&edge>=18){action=delta>0?'LONG候補':'SHORT候補';actionTone=delta>0?'up':'down';}
-  if(d.confidence>=72&&edge>=32){action=delta>0?'LONG優先':'SHORT優先';}
+  if(d.confidence>=profile.candidate.confidence&&edge>=profile.candidate.edge){action=delta>0?'LONG候補':'SHORT候補';actionTone=delta>0?'up':'down';}
+  if(d.confidence>=profile.priority.confidence&&edge>=profile.priority.edge){action=delta>0?'LONG優先':'SHORT優先';}
   const flow=flowTotals(),bp=flow.total?flow.buy/flow.total:.5,mm=d.mm;
   let alert='通常',alertTone='neutral';
   if(flow.total>0&&(bp>=.85||bp<=.15)){alert=bp>.5?'買いフロー急増':'売りフロー急増';alertTone=bp>.5?'up':'down';}
   if(mm&&(Number.isFinite(mm.priceChange)&&Math.abs(mm.priceChange)>=.012||Number.isFinite(mm.oiChange)&&Math.abs(mm.oiChange)>=.025)){alert='急変警戒';alertTone=delta>=0?'up':'down';}
-  if(d.quality.score<45){alert='データ不足';alertTone='neutral';action='見送り';actionTone='neutral';}
+  if(d.confluence){alert='重要分岐接近';alertTone='neutral';}
+  if(d.quality.score<profile.minQuality){alert='データ不足';alertTone='neutral';action='見送り';actionTone='neutral';}
   return {d,radar,dominance,dominanceTone,action,actionTone,alert,alertTone,edge};
 }
 function renderQuickSignalGrid(d){
@@ -1517,7 +1694,7 @@ function renderQuickView(){
   if(liqTitle) liqTitle.textContent=actualLiq?'直近の実清算ライン':(mexc?'直近のMEXC L2反応ライン':'直近の推定反応ライン');
   setText('quickLineMode',actualLiq?'実清算':(mexc?'MEXC L2':'L2推定'));
   setText('quickDominance',q.dominance); setText('quickDominanceMeta',`LONG ${Math.round(d.up)} / SHORT ${Math.round(d.down)}`);
-  setText('quickAction',q.action); setText('quickActionMeta',`信頼度 ${d.confidence}%`);
+  setText('quickAction',q.action); setText('quickActionMeta',`信頼度 ${d.confidence}%${d.calibration?.weight>0?`（実績補正）`:''}`);
   setTone($('quickDominance'),q.dominanceTone); setTone($('quickAction'),q.actionTone);
   const badge=$('quickAlert'); if(badge){badge.textContent=q.alert;badge.className=`signal-badge ${q.alertTone}`;}
   setText('quickDataQuality',`品質 ${d.quality.score}`);
@@ -1536,7 +1713,9 @@ function renderQuickView(){
   else if(q.dominance==='LONG優勢') advice='LONG優勢だが信頼度不足。追いかけず見送り優先。';
   else if(q.dominance==='SHORT優勢') advice='SHORT優勢だが信頼度不足。追いかけず見送り優先。';
   if(d.quality.score<45) advice=`主要データが不足しています（品質 ${d.quality.score}/100）。方向判定よりデータ復旧を優先。`;
+  if(d.confluence) advice+=` 大口壁と実清算が近接する重要分岐です。壁の維持/消失とTaker方向が一致するまで追いかけない判断を優先します。`;
   setText('quickAdvice',advice);
+  maybeRecordSignal(q); renderSignalValidation();
   renderBase();
 }
 function renderDecisionEngine(){
@@ -1654,4 +1833,4 @@ document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==
   }
 })();
 
-// LiqPulse v2.4.0
+// LiqPulse v2.5.0

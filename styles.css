@@ -181,3 +181,7 @@ footer{opacity:.82}
 
 /* v2.4.0 — impact-only wall / liquidation presentation */
 .whale-empty{padding:14px 16px;border:1px dashed #26364b;border-radius:14px;color:#8192a8;font-size:13px;line-height:1.6;background:#0a1320}
+
+/* v2.5.0 — precision validation */
+.validation-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:12px}.validation-grid>div{background:#0c1420;border:1px solid var(--line);border-radius:12px;padding:12px}.validation-grid span{display:block;color:#7f8fa5;font-size:9px;font-weight:700}.validation-grid b{display:block;font-size:18px;margin-top:5px;color:#eaf2ff}.validation-grid small{display:block;color:#65768d;font-size:8px;margin-top:3px}.validation-summary{margin-top:10px;padding:10px 12px;border:1px solid #203149;background:#0b1320;border-radius:12px;color:#aabbd0;font-size:10px}.quick-head-badges .quality-good,.quick-head-badges .quality-mid,.quick-head-badges .quality-low{font-variant-numeric:tabular-nums}@media(max-width:430px){.validation-grid{gap:7px}.validation-grid>div{padding:10px 8px}.validation-grid b{font-size:16px}}
+/* v2.5.0 — self-validation, calibrated confidence, wall reliability */
